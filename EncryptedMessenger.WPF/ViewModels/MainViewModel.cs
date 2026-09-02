@@ -151,7 +151,7 @@ namespace EncryptedMessenger.WPF.ViewModels
             var vm = Contacts.FirstOrDefault(c => c.Id == contactId);
             if (vm != null) vm.IsOnline = online;
 
-            // Also update the open chat header (Verbinde… / Online / Offline)
+            // Also update the open chat header's status text (connecting / online / offline)
             if (ActiveChat?.ContactId == contactId)
                 ActiveChat.SetOnlineStatus(online);
         }

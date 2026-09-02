@@ -12,7 +12,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <!-- 8.0.5 fixes CVE GHSA-8g4q-xg66-9fp4 und GHSA-hh2w-p6rv-4g7w -->
+    <!-- 8.0.5 fixes CVE GHSA-8g4q-xg66-9fp4 and GHSA-hh2w-p6rv-4g7w -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 </Project>

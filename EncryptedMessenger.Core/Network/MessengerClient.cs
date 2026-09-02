@@ -46,8 +46,8 @@ namespace EncryptedMessenger.Core.Network
             }
             catch (OperationCanceledException)
             {
-                Debug.WriteLine($"[Client] CONNECT TIMEOUT → {ip}:{port} (порт закрыт / нет приёмника / блокировка)");
-                throw new IOException($"Verbindung zu {ip}:{port} fehlgeschlagen (Timeout).");
+                Debug.WriteLine($"[Client] CONNECT TIMEOUT → {ip}:{port} (port closed / no listener / blocked)");
+                throw new IOException($"Connection to {ip}:{port} failed (timeout).");
             }
             catch (SocketException ex)
             {

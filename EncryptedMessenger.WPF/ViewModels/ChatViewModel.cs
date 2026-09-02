@@ -43,7 +43,7 @@ namespace EncryptedMessenger.WPF.ViewModels
             }
         }
 
-        /// <summary>Текст статуса под именем контакта в шапке чата.</summary>
+        /// <summary>Status text shown under the contact's name in the chat header.</summary>
         public string StatusText =>
             IsConnecting ? "Verbinde…" :
             IsContactOnline ? "Online" :
@@ -85,7 +85,7 @@ namespace EncryptedMessenger.WPF.ViewModels
         public AsyncRelayCommand SendCommand { get; }
         public RelayCommand InsertEmojiCommand { get; }
 
-        /// <summary>Небольшой набор эмодзи для панели быстрого ввода.</summary>
+        /// <summary>Small set of emoji for the quick-insert panel.</summary>
         public string[] Emojis { get; } =
         [
             "😀","😂","😍","😎","😉","😊","🙂","😢","😭","😡",
@@ -110,7 +110,7 @@ namespace EncryptedMessenger.WPF.ViewModels
             });
 
             _ = LoadHistoryAsync();
-            _ = ConnectAsync();   // поднять соединение сразу при открытии чата
+            _ = ConnectAsync();   // establish the connection as soon as the chat opens
         }
 
         // ── Connect on open ───────────────────────────────────────────────
@@ -128,7 +128,7 @@ namespace EncryptedMessenger.WPF.ViewModels
             }
         }
 
-        /// <summary>Вызывается из MainViewModel, когда пришёл статус online/offline.</summary>
+        /// <summary>Called by MainViewModel when an online/offline status update arrives.</summary>
         public void SetOnlineStatus(bool online)
         {
             IsConnecting = false;
@@ -136,8 +136,8 @@ namespace EncryptedMessenger.WPF.ViewModels
         }
 
         /// <summary>
-        /// Сервис «срастил» ручной контакт (manual_ip_port) с реальным UserId
-        /// собеседника. Обновляем Id и перезагружаем историю под правильным ключом.
+        /// The service merged a manual contact (manual_ip_port) with the peer's
+        /// real UserId. Update the Id and reload history under the correct key.
         /// </summary>
         public void UpdateContactId(string newId)
         {

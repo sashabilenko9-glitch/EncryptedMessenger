@@ -12,7 +12,7 @@ namespace EncryptedMessenger.WPF
         public static MainViewModel MainVM   { get; private set; } = null!;
         public static PipeClient    Pipe     { get; private set; } = null!;
 
-        // Falls kein Windows-Dienst läuft, startet die App den Service selbst
+        // If no Windows Service is running, the app starts the service itself
         private static MessengerService? _standaloneService;
 
         protected override async void OnStartup(StartupEventArgs e)
@@ -22,13 +22,13 @@ namespace EncryptedMessenger.WPF
             Settings = AppSettings.Load();
             Pipe     = new PipeClient();
             MainVM   = new MainViewModel(Settings, Pipe);
-            // MainVM ruft intern Pipe.StartAsync() auf
+            // MainVM internally calls Pipe.StartAsync()
 
-            // 2 Sekunden warten ob sich der Windows-Dienst meldet
+            // Wait 2 seconds to see if the Windows Service responds
             bool serviceRunning = await WaitForServiceAsync(timeoutMs: 2000);
             if (!serviceRunning)
             {
-                // Standalone-Modus: Dienst direkt in der WPF-App starten
+                // Standalone mode: start the service directly inside the WPF app
                 _standaloneService = new MessengerService(Settings);
                 await _standaloneService.StartAsync();
             }
