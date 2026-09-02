@@ -3,6 +3,10 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# EncryptedMessenger runtime data: private RSA key, at-rest storage key,
+# local SQLite database, settings, log files — never commit these.
+data/
+
 # dotenv files
 .env
 

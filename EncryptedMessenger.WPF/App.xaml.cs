@@ -1,16 +1,19 @@
 using System.Windows;
 using EncryptedMessenger.Core.IPC;
+using EncryptedMessenger.Core.Logging;
 using EncryptedMessenger.Core.Models;
 using EncryptedMessenger.Core.Services;
 using EncryptedMessenger.WPF.ViewModels;
+using Microsoft.Extensions.Logging;
 
 namespace EncryptedMessenger.WPF
 {
     public partial class App : Application
     {
-        public static AppSettings   Settings { get; private set; } = null!;
-        public static MainViewModel MainVM   { get; private set; } = null!;
-        public static PipeClient    Pipe     { get; private set; } = null!;
+        public static AppSettings    Settings      { get; private set; } = null!;
+        public static MainViewModel  MainVM        { get; private set; } = null!;
+        public static PipeClient     Pipe          { get; private set; } = null!;
+        public static ILoggerFactory LoggerFactory { get; private set; } = null!;
 
         // If no Windows Service is running, the app starts the service itself
         private static MessengerService? _standaloneService;
@@ -19,9 +22,12 @@ namespace EncryptedMessenger.WPF
         {
             base.OnStartup(e);
 
+            LoggerFactory = AppLogging.CreateLoggerFactory();
+            var logger = LoggerFactory.CreateLogger<App>();
+
             Settings = AppSettings.Load();
-            Pipe     = new PipeClient();
-            MainVM   = new MainViewModel(Settings, Pipe);
+            Pipe     = new PipeClient(LoggerFactory.CreateLogger<PipeClient>());
+            MainVM   = new MainViewModel(Settings, Pipe, LoggerFactory);
             // MainVM internally calls Pipe.StartAsync()
 
             // Wait 2 seconds to see if the Windows Service responds
@@ -29,7 +35,8 @@ namespace EncryptedMessenger.WPF
             if (!serviceRunning)
             {
                 // Standalone mode: start the service directly inside the WPF app
-                _standaloneService = new MessengerService(Settings);
+                logger.LogInformation("No background service detected, starting standalone");
+                _standaloneService = new MessengerService(Settings, LoggerFactory);
                 await _standaloneService.StartAsync();
             }
         }
@@ -50,6 +57,7 @@ namespace EncryptedMessenger.WPF
             MainVM.Dispose();
             if (_standaloneService != null)
                 await _standaloneService.DisposeAsync();
+            LoggerFactory.Dispose();
             base.OnExit(e);
         }
     }

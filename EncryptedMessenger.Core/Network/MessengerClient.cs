@@ -1,7 +1,8 @@
-using System.Diagnostics;
 using System.Net.Sockets;
 using EncryptedMessenger.Core.Encryption;
 using EncryptedMessenger.Core.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EncryptedMessenger.Core.Network
 {
@@ -16,6 +17,7 @@ namespace EncryptedMessenger.Core.Network
 
         private readonly string _ownId;
         private readonly CryptoManager _crypto;
+        private readonly ILogger _logger;
 
         private TcpClient? _tcp;
         private NetworkStream? _stream;
@@ -24,15 +26,16 @@ namespace EncryptedMessenger.Core.Network
         public string ContactId { get; private set; } = string.Empty;
         public bool IsConnected => _tcp?.Connected ?? false;
 
-        public MessengerClient(string ownId, CryptoManager crypto)
+        public MessengerClient(string ownId, CryptoManager crypto, ILogger? logger = null)
         {
             _ownId = ownId;
             _crypto = crypto;
+            _logger = logger ?? NullLogger.Instance;
         }
 
         public async Task ConnectAsync(string ip, int port, CancellationToken ct = default)
         {
-            Debug.WriteLine($"[Client] ConnectAsync → {ip}:{port}");
+            _logger.LogInformation("Connecting to {Ip}:{Port}", ip, port);
             _cts = new CancellationTokenSource();
             _tcp = new TcpClient { NoDelay = true };
 
@@ -42,23 +45,23 @@ namespace EncryptedMessenger.Core.Network
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
                 await _tcp.ConnectAsync(ip, port, timeoutCts.Token);
-                Debug.WriteLine($"[Client] TCP connected to {ip}:{port}");
+                _logger.LogDebug("TCP connected to {Ip}:{Port}", ip, port);
             }
             catch (OperationCanceledException)
             {
-                Debug.WriteLine($"[Client] CONNECT TIMEOUT → {ip}:{port} (port closed / no listener / blocked)");
+                _logger.LogWarning("Connect timeout to {Ip}:{Port} (port closed / no listener / blocked)", ip, port);
                 throw new IOException($"Connection to {ip}:{port} failed (timeout).");
             }
             catch (SocketException ex)
             {
-                Debug.WriteLine($"[Client] SOCKET ERROR → {ip}:{port}: {ex.SocketErrorCode} – {ex.Message}");
+                _logger.LogWarning(ex, "Socket error connecting to {Ip}:{Port}: {SocketError}", ip, port, ex.SocketErrorCode);
                 throw;
             }
 
             _stream = _tcp.GetStream();
 
             // 1. Receive peer's public key
-            Debug.WriteLine("[Client] waiting for KeyExchange…");
+            _logger.LogDebug("Waiting for KeyExchange…");
             var kePkt = await PacketHelper.ReceiveAsync(_stream, ct)
                         ?? throw new IOException("Handshake failed: no KeyExchange packet.");
             if (kePkt.Type != PacketType.KeyExchange)
@@ -66,7 +69,7 @@ namespace EncryptedMessenger.Core.Network
 
             ContactId = kePkt.SenderId;
             var peerPublicKey = kePkt.Payload;
-            Debug.WriteLine($"[Client] got peer key, contactId={ContactId}");
+            _logger.LogDebug("Got peer key, contactId={ContactId}", ContactId);
 
             // 2. Send own public key
             await PacketHelper.SendAsync(_stream, new NetworkPacket
@@ -87,7 +90,7 @@ namespace EncryptedMessenger.Core.Network
                 Timestamp = DateTime.UtcNow
             }, ct);
 
-            Debug.WriteLine("[Client] handshake complete ✓");
+            _logger.LogInformation("Handshake complete with {ContactId}", ContactId);
             _ = Task.Run(() => ReceiveLoopAsync(_cts.Token), _cts.Token);
         }
 
@@ -105,7 +108,7 @@ namespace EncryptedMessenger.Core.Network
                 MessageId = messageId,
                 Timestamp = DateTime.UtcNow
             });
-            Debug.WriteLine($"[Client] message sent id={messageId}");
+            _logger.LogInformation("Message sent id={MessageId}", messageId);
         }
 
         public async Task DisconnectAsync()
@@ -121,7 +124,10 @@ namespace EncryptedMessenger.Core.Network
                         Timestamp = DateTime.UtcNow
                     });
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to send Disconnect packet (peer likely already gone)");
+                }
             }
             Dispose();
         }
@@ -155,7 +161,7 @@ namespace EncryptedMessenger.Core.Network
                 }
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex) { Debug.WriteLine($"[Client] recv loop error: {ex.Message}"); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Receive loop error for {ContactId}", ContactId); }
 
         exit:
             _crypto.RemoveSession(ContactId);

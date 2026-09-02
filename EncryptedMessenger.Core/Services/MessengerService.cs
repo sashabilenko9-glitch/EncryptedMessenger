@@ -3,6 +3,8 @@ using EncryptedMessenger.Core.Encryption;
 using EncryptedMessenger.Core.IPC;
 using EncryptedMessenger.Core.Models;
 using EncryptedMessenger.Core.Network;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EncryptedMessenger.Core.Services
 {
@@ -20,13 +22,17 @@ namespace EncryptedMessenger.Core.Services
         private readonly MessengerServer _server;
         private readonly PeerDiscovery _discovery;
         private readonly PipeServer _pipeServer;
+        private readonly ILoggerFactory _loggerFactory;
+        private readonly ILogger _logger;
 
         private readonly Dictionary<string, MessengerClient> _clients = [];
         private readonly SemaphoreSlim _clientsLock = new(1, 1);
 
-        public MessengerService(AppSettings? settings = null)
+        public MessengerService(AppSettings? settings = null, ILoggerFactory? loggerFactory = null)
         {
             _settings = settings ?? AppSettings.Load();
+            _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+            _logger = _loggerFactory.CreateLogger<MessengerService>();
 
             _crypto = new CryptoManager(AppSettings.PrivateKeyFile, AppSettings.StorageKeyFile);
             _db = new AppDbContext(AppSettings.DatabaseFileName);
@@ -34,12 +40,14 @@ namespace EncryptedMessenger.Core.Services
             _contactRepo = new ContactRepository(_db);
 
             _server = new MessengerServer(
-                _settings.TcpPort, _settings.UserId, _settings.DisplayName, _crypto);
+                _settings.TcpPort, _settings.UserId, _settings.DisplayName, _crypto,
+                _loggerFactory.CreateLogger<MessengerServer>());
 
             _discovery = new PeerDiscovery(
-                _settings.UdpPort, _settings.UserId, _settings.DisplayName, _settings.TcpPort);
+                _settings.UdpPort, _settings.UserId, _settings.DisplayName, _settings.TcpPort,
+                _loggerFactory.CreateLogger<PeerDiscovery>());
 
-            _pipeServer = new PipeServer();
+            _pipeServer = new PipeServer(_loggerFactory.CreateLogger<PipeServer>());
 
             _server.MessageReceived += OnMessageReceived;
             _server.ContactConnected += OnContactConnected;
@@ -93,8 +101,7 @@ namespace EncryptedMessenger.Core.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[Service] SendMessage FAILED: {ex.GetType().Name} – {ex.Message}");
+                _logger.LogError(ex, "SendMessage failed for recipient {RecipientId}", recipientId);
                 return null;
             }
             finally { _clientsLock.Release(); }
@@ -116,8 +123,7 @@ namespace EncryptedMessenger.Core.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[Service] Connect FAILED: {ex.GetType().Name} – {ex.Message}");
+                _logger.LogWarning(ex, "Connect failed for contact {RecipientId}", recipientId);
                 await _pipeServer.BroadcastAsync(PipeMessage.Create(
                     PipeMessageType.ContactOffline, new ContactStatusPayload(recipientId, false)));
                 return false;
@@ -135,18 +141,25 @@ namespace EncryptedMessenger.Core.Services
             if (_clients.TryGetValue(recipientId, out var existing) && existing.IsConnected)
                 return existing;
 
-            var client = new MessengerClient(_settings.UserId, _crypto);
+            var client = new MessengerClient(_settings.UserId, _crypto, _loggerFactory.CreateLogger<MessengerClient>());
 
             client.MessageReceived += OnMessageReceived;
             client.DeliveryAcknowledged += OnDeliveryAcknowledged;
-            client.Disconnected += (_, _) =>
+            client.Disconnected += async (_, _) =>
             {
-                _clientsLock.Wait();
+                await _clientsLock.WaitAsync();
                 _clients.Remove(recipientId);
                 _clientsLock.Release();
-                _pipeServer.BroadcastAsync(PipeMessage.Create(
-                    PipeMessageType.ContactOffline,
-                    new ContactStatusPayload(recipientId, false)));
+                try
+                {
+                    await _pipeServer.BroadcastAsync(PipeMessage.Create(
+                        PipeMessageType.ContactOffline,
+                        new ContactStatusPayload(recipientId, false)));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to broadcast contact-offline for {ContactId}", recipientId);
+                }
             };
 
             await client.ConnectAsync(ip, port);
@@ -274,7 +287,11 @@ namespace EncryptedMessenger.Core.Services
                     foreach (var m in hist)
                     {
                         try { m.DecryptedContent = _crypto.DecryptForStorage(m.EncryptedContent); }
-                        catch { m.DecryptedContent = m.EncryptedContent; }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Message {MessageId} not in storage-encrypted format, treating as legacy plaintext", m.MessageId);
+                            m.DecryptedContent = m.EncryptedContent;
+                        }
                     }
                     await _pipeServer.BroadcastAsync(
                         PipeMessage.Create(PipeMessageType.MessageHistory, hist));

@@ -5,6 +5,7 @@ using System.Windows.Data;
 using EncryptedMessenger.Core.IPC;
 using EncryptedMessenger.Core.Models;
 using EncryptedMessenger.WPF.Helpers;
+using Microsoft.Extensions.Logging;
 
 namespace EncryptedMessenger.WPF.ViewModels
 {
@@ -12,6 +13,8 @@ namespace EncryptedMessenger.WPF.ViewModels
     {
         private readonly PipeClient _pipe;
         private readonly AppSettings _settings;
+        private readonly ILoggerFactory _loggerFactory;
+        private readonly ILogger _logger;
 
         // ── Contacts ──────────────────────────────────────────────────────
         public ObservableCollection<ContactViewModel> Contacts { get; } = [];
@@ -65,10 +68,12 @@ namespace EncryptedMessenger.WPF.ViewModels
         public RelayCommand AddContactCommand { get; }
 
         // ── Constructor ───────────────────────────────────────────────────
-        public MainViewModel(AppSettings settings, PipeClient pipeClient)
+        public MainViewModel(AppSettings settings, PipeClient pipeClient, ILoggerFactory loggerFactory)
         {
             _settings = settings;
             _pipe = pipeClient;
+            _loggerFactory = loggerFactory;
+            _logger = loggerFactory.CreateLogger<MainViewModel>();
 
             _filteredContacts = CollectionViewSource.GetDefaultView(Contacts);
             _filteredContacts.Filter = obj =>
@@ -80,6 +85,7 @@ namespace EncryptedMessenger.WPF.ViewModels
             _pipe.MessageReceived += OnPipeMessage;
             _pipe.ConnectionChanged += (_, connected) =>
             {
+                _logger.LogInformation("Service connection state changed: {Connected}", connected);
                 Application.Current.Dispatcher.Invoke(() => IsServiceConnected = connected);
                 if (connected) _ = RequestContactsAsync();
             };
@@ -169,7 +175,7 @@ namespace EncryptedMessenger.WPF.ViewModels
         private void OpenChat(ContactViewModel contact)
         {
             contact.UnreadCount = 0;
-            ActiveChat = new ChatViewModel(contact.Contact, _pipe, _settings.UserId);
+            ActiveChat = new ChatViewModel(contact.Contact, _pipe, _settings.UserId, _loggerFactory);
         }
 
         private void OpenSettings()

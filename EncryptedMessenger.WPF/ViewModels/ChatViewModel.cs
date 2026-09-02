@@ -4,6 +4,7 @@ using EncryptedMessenger.Core.Database;
 using EncryptedMessenger.Core.IPC;
 using EncryptedMessenger.Core.Models;
 using EncryptedMessenger.WPF.Helpers;
+using Microsoft.Extensions.Logging;
 
 namespace EncryptedMessenger.WPF.ViewModels
 {
@@ -12,6 +13,7 @@ namespace EncryptedMessenger.WPF.ViewModels
         private readonly PipeClient _pipe;
         private readonly string _ownId;
         private readonly Contact _contact;
+        private readonly ILogger _logger;
 
         // ── Contact info ──────────────────────────────────────────────────
         public string ContactId => _contact.Id;
@@ -94,11 +96,12 @@ namespace EncryptedMessenger.WPF.ViewModels
         ];
 
         // ── Constructor ───────────────────────────────────────────────────
-        public ChatViewModel(Contact contact, PipeClient pipe, string ownId)
+        public ChatViewModel(Contact contact, PipeClient pipe, string ownId, ILoggerFactory loggerFactory)
         {
             _contact = contact;
             _pipe = pipe;
             _ownId = ownId;
+            _logger = loggerFactory.CreateLogger<ChatViewModel>();
 
             SendCommand = new AsyncRelayCommand(
                 _ => SendMessageAsync(),
@@ -122,8 +125,9 @@ namespace EncryptedMessenger.WPF.ViewModels
                 await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.Connect,
                     new ConnectPayload(_contact.Id)));
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "Connect request failed for {ContactId}", _contact.Id);
                 IsConnecting = false;
             }
         }
@@ -173,8 +177,9 @@ namespace EncryptedMessenger.WPF.ViewModels
                     new SendMessagePayload(_contact.Id, text, msgId)));
                 vm.Status = MessageStatus.Sent;
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "Send failed for message {MessageId} to {ContactId}", msgId, _contact.Id);
                 vm.Status = MessageStatus.Failed;
             }
             finally
@@ -218,8 +223,9 @@ namespace EncryptedMessenger.WPF.ViewModels
                 await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.GetHistory,
                     new GetHistoryPayload(convId, 0, 50)));
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "History request failed for conversation {ConversationId}", convId);
                 IsLoading = false;
             }
         }

@@ -17,11 +17,13 @@ namespace EncryptedMessenger.WindowsService
     public sealed class MessengerWorker : BackgroundService
     {
         private readonly ILogger<MessengerWorker> _logger;
+        private readonly ILoggerFactory _loggerFactory;
         private MessengerService? _service;
 
-        public MessengerWorker(ILogger<MessengerWorker> logger)
+        public MessengerWorker(ILogger<MessengerWorker> logger, ILoggerFactory loggerFactory)
         {
             _logger = logger;
+            _loggerFactory = loggerFactory;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,7 +31,7 @@ namespace EncryptedMessenger.WindowsService
             _logger.LogInformation("EncryptedMessenger Service starting…");
 
             var settings = AppSettings.Load();
-            _service     = new MessengerService(settings);
+            _service     = new MessengerService(settings, _loggerFactory);
 
             try
             {

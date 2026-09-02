@@ -1,5 +1,7 @@
 using System.IO.Pipes;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EncryptedMessenger.Core.IPC
 {
@@ -12,12 +14,18 @@ namespace EncryptedMessenger.Core.IPC
         public event EventHandler<PipeMessage>? MessageReceived;
         public event EventHandler<bool>? ConnectionChanged; // true = connected
 
+        private readonly ILogger _logger;
         private NamedPipeClientStream? _pipe;
         private StreamWriter? _writer;
         private CancellationTokenSource _cts = new();
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
         public bool IsConnected => _pipe?.IsConnected ?? false;
+
+        public PipeClient(ILogger? logger = null)
+        {
+            _logger = logger ?? NullLogger.Instance;
+        }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -41,11 +49,12 @@ namespace EncryptedMessenger.Core.IPC
                     await _pipe.ConnectAsync(5_000, ct); // 5 s timeout
                     _writer = new StreamWriter(_pipe, Encoding.UTF8) { AutoFlush = true };
 
+                    _logger.LogInformation("Connected to service pipe");
                     ConnectionChanged?.Invoke(this, true);
                     await ReadLoopAsync(_pipe, ct);
                 }
                 catch (OperationCanceledException) { break; }
-                catch { /* service not started yet – retry */ }
+                catch (Exception ex) { _logger.LogDebug(ex, "Service not reachable yet – retrying"); }
                 finally
                 {
                     ConnectionChanged?.Invoke(this, false);
@@ -68,7 +77,7 @@ namespace EncryptedMessenger.Core.IPC
                 var line = await reader.ReadLineAsync(ct);
                 if (line == null) break;
                 try { MessageReceived?.Invoke(this, PipeMessage.FromJson(line)); }
-                catch { /* malformed */ }
+                catch (Exception ex) { _logger.LogWarning(ex, "Malformed pipe message: {Line}", line); }
             }
         }
 

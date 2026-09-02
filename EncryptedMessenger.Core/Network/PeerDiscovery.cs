@@ -1,9 +1,10 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using EncryptedMessenger.Core.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EncryptedMessenger.Core.Network
 {
@@ -16,7 +17,6 @@ namespace EncryptedMessenger.Core.Network
     ///     the same UDP port on one host.
     ///   • Packets are sent to 255.255.255.255 AND to 127.0.0.1 so same-host
     ///     copies reliably receive each other even if the NIC drops local broadcast.
-    ///   • Diagnostic output goes to the VS Output window (Debug.WriteLine).
     /// </summary>
     public sealed class PeerDiscovery : IDisposable
     {
@@ -29,16 +29,18 @@ namespace EncryptedMessenger.Core.Network
         private readonly string _ownId;
         private readonly string _ownDisplayName;
         private readonly int _ownTcpPort;
+        private readonly ILogger _logger;
 
         private UdpClient? _udpClient;
         private CancellationTokenSource _cts = new();
 
-        public PeerDiscovery(int udpPort, string ownId, string ownDisplayName, int ownTcpPort)
+        public PeerDiscovery(int udpPort, string ownId, string ownDisplayName, int ownTcpPort, ILogger? logger = null)
         {
             _udpPort = udpPort;
             _ownId = ownId;
             _ownDisplayName = ownDisplayName;
             _ownTcpPort = ownTcpPort;
+            _logger = logger ?? NullLogger.Instance;
         }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
@@ -58,8 +60,8 @@ namespace EncryptedMessenger.Core.Network
             _udpClient.Client = socket;
             _udpClient.EnableBroadcast = true;
 
-            Debug.WriteLine($"[Discovery] START id={Short(_ownId)} name={_ownDisplayName} " +
-                            $"udp={_udpPort} tcp={_ownTcpPort}");
+            _logger.LogInformation("Discovery started id={ContactId} name={DisplayName} udp={UdpPort} tcp={TcpPort}",
+                Short(_ownId), _ownDisplayName, _udpPort, _ownTcpPort);
 
             _ = Task.Run(() => ListenLoopAsync(_cts.Token));
             _ = Task.Run(() => BroadcastLoopAsync(_cts.Token));
@@ -109,11 +111,11 @@ namespace EncryptedMessenger.Core.Network
                 await _udpClient!.SendAsync(data, data.Length,
                     new IPEndPoint(IPAddress.Loopback, _udpPort));
 
-                Debug.WriteLine($"[Discovery] SENT  request={isRequest} from={_ownDisplayName}");
+                _logger.LogDebug("Broadcast sent request={IsRequest} from={DisplayName}", isRequest, _ownDisplayName);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Discovery] SEND FAILED: {ex.Message}");
+                _logger.LogWarning(ex, "Broadcast send failed");
             }
         }
 
@@ -131,7 +133,7 @@ namespace EncryptedMessenger.Core.Network
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Discovery] RECV ERROR: {ex.Message}");
+                    _logger.LogWarning(ex, "Receive error");
                 }
             }
         }
@@ -145,19 +147,19 @@ namespace EncryptedMessenger.Core.Network
 
                 if (packet == null)
                 {
-                    Debug.WriteLine("[Discovery] RECV but packet null");
+                    _logger.LogDebug("Received null discovery packet");
                     return;
                 }
 
                 if (packet.PeerId == _ownId)
                 {
-                    Debug.WriteLine("[Discovery] RECV own packet → ignored");
+                    _logger.LogTrace("Ignored own discovery packet");
                     return;
                 }
 
                 var ip = result.RemoteEndPoint.Address.ToString();
-                Debug.WriteLine($"[Discovery] RECV PEER name={packet.DisplayName} " +
-                                $"ip={ip} tcp={packet.TcpPort} → raising PeerDiscovered");
+                _logger.LogInformation("Discovered peer {DisplayName} ip={Ip} tcp={TcpPort}",
+                    packet.DisplayName, ip, packet.TcpPort);
 
                 PeerDiscovered?.Invoke(this, new PeerDiscoveredEventArgs(
                     packet.PeerId, packet.DisplayName, ip, packet.TcpPort));
@@ -166,7 +168,7 @@ namespace EncryptedMessenger.Core.Network
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Discovery] PARSE ERROR: {ex.Message}");
+                _logger.LogWarning(ex, "Failed to parse discovery packet");
             }
         }
 

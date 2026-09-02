@@ -1,5 +1,7 @@
 using System.IO.Pipes;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EncryptedMessenger.Core.IPC
 {
@@ -15,11 +17,17 @@ namespace EncryptedMessenger.Core.IPC
 
         public event EventHandler<PipeMessage>? MessageReceived;
 
+        private readonly ILogger _logger;
         private CancellationTokenSource _cts = new();
 
         // All active writer streams (one per connected UI instance)
         private readonly List<PipeStream> _clients = [];
         private readonly object _clientsLock = new();
+
+        public PipeServer(ILogger? logger = null)
+        {
+            _logger = logger ?? NullLogger.Instance;
+        }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -44,10 +52,15 @@ namespace EncryptedMessenger.Core.IPC
                 {
                     await pipe.WaitForConnectionAsync(ct);
                     lock (_clientsLock) _clients.Add(pipe);
+                    _logger.LogInformation("UI client connected ({Count} active)", _clients.Count);
                     _ = Task.Run(() => HandleClientAsync(pipe, ct), ct);
                 }
                 catch (OperationCanceledException) { pipe.Dispose(); break; }
-                catch { pipe.Dispose(); }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Pipe accept error");
+                    pipe.Dispose();
+                }
             }
         }
 
@@ -61,15 +74,16 @@ namespace EncryptedMessenger.Core.IPC
                     var line = await reader.ReadLineAsync(ct);
                     if (line == null) break;
                     try { MessageReceived?.Invoke(this, PipeMessage.FromJson(line)); }
-                    catch { /* malformed JSON */ }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Malformed pipe message: {Line}", line); }
                 }
             }
             catch (OperationCanceledException) { }
-            catch { }
+            catch (Exception ex) { _logger.LogWarning(ex, "Pipe client handler error"); }
             finally
             {
                 lock (_clientsLock) _clients.Remove(pipe);
                 pipe.Dispose();
+                _logger.LogInformation("UI client disconnected");
             }
         }
 
@@ -86,7 +100,7 @@ namespace EncryptedMessenger.Core.IPC
             foreach (var client in snapshot)
             {
                 try { await client.WriteAsync(data); await client.FlushAsync(); }
-                catch { /* client disconnected */ }
+                catch (Exception ex) { _logger.LogDebug(ex, "Broadcast to a client failed (likely disconnected)"); }
             }
         }
 

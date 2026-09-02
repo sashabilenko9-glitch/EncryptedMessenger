@@ -1,8 +1,9 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using EncryptedMessenger.Core.Encryption;
 using EncryptedMessenger.Core.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EncryptedMessenger.Core.Network
 {
@@ -20,6 +21,7 @@ namespace EncryptedMessenger.Core.Network
         private readonly string _ownId;
         private readonly string _ownDisplayName;
         private readonly CryptoManager _crypto;
+        private readonly ILogger _logger;
 
         private TcpListener? _listener;
         private CancellationTokenSource _cts = new();
@@ -27,12 +29,13 @@ namespace EncryptedMessenger.Core.Network
         private readonly Dictionary<string, NetworkStream> _activeStreams = new();
         private readonly object _streamsLock = new();
 
-        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto)
+        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null)
         {
             _port = port;
             _ownId = ownId;
             _ownDisplayName = ownDisplayName;
             _crypto = crypto;
+            _logger = logger ?? NullLogger.Instance;
         }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
@@ -44,18 +47,18 @@ namespace EncryptedMessenger.Core.Network
             {
                 _listener = new TcpListener(IPAddress.Any, _port);
                 _listener.Start();
-                Debug.WriteLine($"[Server] LISTENING on 0.0.0.0:{_port}  (id={Short(_ownId)})");
+                _logger.LogInformation("Listening on 0.0.0.0:{Port} (id={ContactId})", _port, Short(_ownId));
                 await AcceptLoopAsync(_cts.Token);
             }
             catch (SocketException ex)
             {
                 // Most common: port already in use (another copy on same machine same port)
-                Debug.WriteLine($"[Server] START FAILED on port {_port}: {ex.SocketErrorCode} – {ex.Message}");
+                _logger.LogError(ex, "Start failed on port {Port}: {SocketError}", _port, ex.SocketErrorCode);
                 throw;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Server] START FAILED on port {_port}: {ex.GetType().Name} – {ex.Message}");
+                _logger.LogError(ex, "Start failed on port {Port}", _port);
                 throw;
             }
         }
@@ -64,7 +67,7 @@ namespace EncryptedMessenger.Core.Network
         {
             _cts.Cancel();
             _listener?.Stop();
-            Debug.WriteLine("[Server] stopped");
+            _logger.LogInformation("Server stopped");
         }
 
         // ── Accept loop ───────────────────────────────────────────────────
@@ -78,13 +81,13 @@ namespace EncryptedMessenger.Core.Network
                     var client = await _listener!.AcceptTcpClientAsync(ct);
                     client.NoDelay = true;
                     var remote = client.Client.RemoteEndPoint?.ToString() ?? "?";
-                    Debug.WriteLine($"[Server] INCOMING connection from {remote}");
+                    _logger.LogInformation("Incoming connection from {Remote}", remote);
                     _ = Task.Run(() => HandleClientAsync(client, ct), ct);
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Server] accept error: {ex.GetType().Name} – {ex.Message}");
+                    _logger.LogWarning(ex, "Accept error");
                 }
             }
         }
@@ -106,27 +109,27 @@ namespace EncryptedMessenger.Core.Network
                     Payload = _crypto.PublicKeyXml,
                     Timestamp = DateTime.UtcNow
                 }, ct);
-                Debug.WriteLine("[Server] sent own public key");
+                _logger.LogDebug("Sent own public key");
 
                 // 2. Receive peer's public key
                 var kePkt = await PacketHelper.ReceiveAsync(stream, ct);
                 if (kePkt?.Type != PacketType.KeyExchange)
                 {
-                    Debug.WriteLine($"[Server] handshake abort: expected KeyExchange, got {kePkt?.Type.ToString() ?? "null"}");
+                    _logger.LogWarning("Handshake abort: expected KeyExchange, got {PacketType}", kePkt?.Type.ToString() ?? "null");
                     return;
                 }
                 contactId = kePkt.SenderId;
-                Debug.WriteLine($"[Server] got peer key, contactId={Short(contactId)}");
+                _logger.LogDebug("Got peer key, contactId={ContactId}", Short(contactId));
 
                 // 3. Receive encrypted AES session key
                 var skPkt = await PacketHelper.ReceiveAsync(stream, ct);
                 if (skPkt?.Type != PacketType.SessionKey)
                 {
-                    Debug.WriteLine($"[Server] handshake abort: expected SessionKey, got {skPkt?.Type.ToString() ?? "null"}");
+                    _logger.LogWarning("Handshake abort: expected SessionKey, got {PacketType}", skPkt?.Type.ToString() ?? "null");
                     return;
                 }
                 _crypto.DecryptAndStoreSessionKey(contactId, skPkt.Payload);
-                Debug.WriteLine($"[Server] handshake complete ✓ with {Short(contactId)}");
+                _logger.LogInformation("Handshake complete with {ContactId}", Short(contactId));
 
                 lock (_streamsLock) _activeStreams[contactId] = stream;
                 ContactConnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: true));
@@ -135,14 +138,14 @@ namespace EncryptedMessenger.Core.Network
                 while (!ct.IsCancellationRequested && client.Connected)
                 {
                     var pkt = await PacketHelper.ReceiveAsync(stream, ct);
-                    if (pkt == null) { Debug.WriteLine("[Server] peer closed stream"); break; }
+                    if (pkt == null) { _logger.LogInformation("Peer closed stream ({ContactId})", Short(contactId)); break; }
                     await ProcessPacketAsync(pkt, stream, ct);
                 }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Server] client handler error ({Short(contactId ?? "?")}): {ex.GetType().Name} – {ex.Message}");
+                _logger.LogWarning(ex, "Client handler error ({ContactId})", Short(contactId ?? "?"));
             }
             finally
             {
@@ -152,7 +155,7 @@ namespace EncryptedMessenger.Core.Network
                     lock (_streamsLock) _activeStreams.Remove(contactId);
                     _crypto.RemoveSession(contactId);
                     ContactDisconnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: false));
-                    Debug.WriteLine($"[Server] disconnected {Short(contactId)}");
+                    _logger.LogInformation("Disconnected {ContactId}", Short(contactId));
                 }
             }
         }
@@ -165,7 +168,7 @@ namespace EncryptedMessenger.Core.Network
             {
                 case PacketType.Message:
                     var plain = _crypto.DecryptMessage(pkt.Payload, pkt.SenderId);
-                    Debug.WriteLine($"[Server] MESSAGE received from {Short(pkt.SenderId)} id={pkt.MessageId}");
+                    _logger.LogInformation("Message received from {ContactId} id={MessageId}", Short(pkt.SenderId), pkt.MessageId);
                     MessageReceived?.Invoke(this, new MessageReceivedEventArgs(
                         pkt.SenderId, plain, pkt.MessageId ?? string.Empty, pkt.Timestamp));
 
@@ -209,7 +212,7 @@ namespace EncryptedMessenger.Core.Network
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Server] read-ack send failed: {ex.Message}");
+                _logger.LogWarning(ex, "Read-ack send failed for {ContactId}", Short(contactId));
             }
         }
 
