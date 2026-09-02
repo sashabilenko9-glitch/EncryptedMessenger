@@ -13,6 +13,7 @@ namespace EncryptedMessenger.Core.Models
         public const string SettingsFileName  = @".\data\settings.json";
         public const string DatabaseFileName  = @".\data\messenger.db";
         public const string PrivateKeyFile    = @".\data\private.key";
+        public const string StorageKeyFile    = @".\data\storage.key";
 
         public string UserId      { get; set; } = Guid.NewGuid().ToString();
         public string DisplayName { get; set; } = Environment.UserName;

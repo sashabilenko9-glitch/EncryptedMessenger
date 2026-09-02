@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 
 namespace EncryptedMessenger.Core.Encryption
 {
@@ -22,6 +23,7 @@ namespace EncryptedMessenger.Core.Encryption
     public sealed class CryptoManager : IDisposable
     {
         private readonly RsaCryptoService _rsa;
+        private readonly byte[] _storageKey;
 
         /// <summary>Maps contactId → AES session key material.</summary>
         private readonly ConcurrentDictionary<string, SessionKey> _sessions = new();
@@ -34,7 +36,12 @@ namespace EncryptedMessenger.Core.Encryption
         /// Relative or absolute path to the stored RSA private key (XML).
         /// If the file does not exist, a new key pair is generated and saved.
         /// </param>
-        public CryptoManager(string privateKeyPath)
+        /// <param name="storageKeyPath">
+        /// Relative or absolute path to the persistent local AES key used to
+        /// encrypt message history at rest (independent of per-session keys,
+        /// which are discarded on disconnect). Generated on first run.
+        /// </param>
+        public CryptoManager(string privateKeyPath, string? storageKeyPath = null)
         {
             var dir = Path.GetDirectoryName(privateKeyPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -47,6 +54,17 @@ namespace EncryptedMessenger.Core.Encryption
             {
                 _rsa = new RsaCryptoService();
                 File.WriteAllText(privateKeyPath, _rsa.GetPrivateKeyXml());
+            }
+
+            storageKeyPath ??= privateKeyPath + ".storage";
+            if (File.Exists(storageKeyPath))
+            {
+                _storageKey = Convert.FromBase64String(File.ReadAllText(storageKeyPath));
+            }
+            else
+            {
+                _storageKey = RandomNumberGenerator.GetBytes(32);
+                File.WriteAllText(storageKeyPath, Convert.ToBase64String(_storageKey));
             }
         }
 
@@ -98,6 +116,29 @@ namespace EncryptedMessenger.Core.Encryption
             var s = GetSession(contactId);
             var cipher = Convert.FromBase64String(encryptedBase64);
             return AesCryptoService.Decrypt(cipher, s.Key, s.IV);
+        }
+
+        // ── Local storage crypto (at-rest, independent of session keys) ────
+
+        /// <summary>Encrypts <paramref name="plainText"/> with the persistent local storage key for saving to the database. A fresh random IV is generated per call and prepended to the ciphertext.</summary>
+        public string EncryptForStorage(string plainText)
+        {
+            var iv = RandomNumberGenerator.GetBytes(16);
+            var cipher = AesCryptoService.Encrypt(plainText, _storageKey, iv);
+
+            var blob = new byte[iv.Length + cipher.Length];
+            Buffer.BlockCopy(iv, 0, blob, 0, iv.Length);
+            Buffer.BlockCopy(cipher, 0, blob, iv.Length, cipher.Length);
+            return Convert.ToBase64String(blob);
+        }
+
+        /// <summary>Decrypts a value previously produced by <see cref="EncryptForStorage"/>.</summary>
+        public string DecryptForStorage(string encryptedBase64)
+        {
+            var blob = Convert.FromBase64String(encryptedBase64);
+            var iv = blob[..16];
+            var cipher = blob[16..];
+            return AesCryptoService.Decrypt(cipher, _storageKey, iv);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────

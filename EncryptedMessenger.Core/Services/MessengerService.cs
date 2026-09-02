@@ -28,7 +28,7 @@ namespace EncryptedMessenger.Core.Services
         {
             _settings = settings ?? AppSettings.Load();
 
-            _crypto = new CryptoManager(AppSettings.PrivateKeyFile);
+            _crypto = new CryptoManager(AppSettings.PrivateKeyFile, AppSettings.StorageKeyFile);
             _db = new AppDbContext(AppSettings.DatabaseFileName);
             _msgRepo = new MessageRepository(_db);
             _contactRepo = new ContactRepository(_db);
@@ -81,7 +81,7 @@ namespace EncryptedMessenger.Core.Services
                     ConversationId = MessageRepository.ConversationId(_settings.UserId, targetId),
                     SenderId = _settings.UserId,
                     RecipientId = targetId,
-                    EncryptedContent = plainText,
+                    EncryptedContent = _crypto.EncryptForStorage(plainText),
                     DecryptedContent = plainText,
                     MessageId = msgId,
                     IsOutgoing = true,
@@ -199,7 +199,7 @@ namespace EncryptedMessenger.Core.Services
                 ConversationId = MessageRepository.ConversationId(_settings.UserId, e.SenderId),
                 SenderId = e.SenderId,
                 RecipientId = _settings.UserId,
-                EncryptedContent = e.PlainText,
+                EncryptedContent = _crypto.EncryptForStorage(e.PlainText),
                 DecryptedContent = e.PlainText,
                 MessageId = e.MessageId,
                 Timestamp = e.Timestamp,
@@ -271,6 +271,11 @@ namespace EncryptedMessenger.Core.Services
                     var req = msg.Deserialize<GetHistoryPayload>();
                     var hist = await _msgRepo.GetByConversationAsync(
                         req.ConversationId, req.Skip, req.Take);
+                    foreach (var m in hist)
+                    {
+                        try { m.DecryptedContent = _crypto.DecryptForStorage(m.EncryptedContent); }
+                        catch { m.DecryptedContent = m.EncryptedContent; }
+                    }
                     await _pipeServer.BroadcastAsync(
                         PipeMessage.Create(PipeMessageType.MessageHistory, hist));
                     break;
