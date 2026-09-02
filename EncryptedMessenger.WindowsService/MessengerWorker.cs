@@ -1,0 +1,59 @@
+using EncryptedMessenger.Core.Models;
+using EncryptedMessenger.Core.Services;
+
+namespace EncryptedMessenger.WindowsService
+{
+    /// <summary>
+    /// Long-running Worker registered as a Windows Service.
+    ///
+    /// Install:
+    ///   sc create EncryptedMessenger binPath= "C:\...\EncryptedMessenger.Service.exe"
+    ///   sc start  EncryptedMessenger
+    ///
+    /// Or via the .NET tool:
+    ///   dotnet publish -r win-x64 -c Release
+    ///   sc create EncryptedMessenger binPath= "publish\EncryptedMessenger.Service.exe"
+    /// </summary>
+    public sealed class MessengerWorker : BackgroundService
+    {
+        private readonly ILogger<MessengerWorker> _logger;
+        private MessengerService? _service;
+
+        public MessengerWorker(ILogger<MessengerWorker> logger)
+        {
+            _logger = logger;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _logger.LogInformation("EncryptedMessenger Service starting…");
+
+            var settings = AppSettings.Load();
+            _service     = new MessengerService(settings);
+
+            try
+            {
+                await _service.StartAsync();
+                _logger.LogInformation(
+                    "Service running on TCP:{TcpPort} UDP:{UdpPort}",
+                    settings.TcpPort, settings.UdpPort);
+
+                // Keep the worker alive until the host requests cancellation
+                await Task.Delay(Timeout.Infinite, stoppingToken);
+            }
+            catch (OperationCanceledException) { /* normal shutdown */ }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Fatal error in MessengerService.");
+                throw; // causes the service manager to restart the service
+            }
+            finally
+            {
+                if (_service != null)
+                    await _service.DisposeAsync();
+
+                _logger.LogInformation("EncryptedMessenger Service stopped.");
+            }
+        }
+    }
+}

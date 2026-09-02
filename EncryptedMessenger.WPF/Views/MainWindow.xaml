@@ -1,0 +1,377 @@
+<Window x:Class="EncryptedMessenger.WPF.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:EncryptedMessenger.WPF.ViewModels"
+        xmlns:views="clr-namespace:EncryptedMessenger.WPF.Views"
+        Title="EncryptedMessenger"
+        Height="740" Width="1120"
+        MinHeight="520" MinWidth="760"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BgMainBrush}">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="310" MinWidth="250" MaxWidth="400"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ╔══════════════════════════════════╗ -->
+        <!-- ║            SIDEBAR               ║ -->
+        <!-- ╚══════════════════════════════════╝ -->
+        <Grid Grid.Column="0" Background="{StaticResource BgSidebarBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <!-- profile header    -->
+                <RowDefinition Height="Auto"/>
+                <!-- search bar        -->
+                <RowDefinition Height="*"/>
+                <!-- contacts list     -->
+                <RowDefinition Height="Auto"/>
+                <!-- encryption footer -->
+            </Grid.RowDefinitions>
+
+            <!-- ── PROFILE HEADER ─────────────────────────────────── -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource BgHeaderBrush}"
+                    Padding="14 11">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Avatar circle + online dot -->
+                    <Grid Grid.Column="0" Width="44" Height="44">
+                        <Border CornerRadius="22"
+                                Background="{StaticResource AccentBrush}">
+                            <TextBlock Text="{Binding OwnFirstLetter}"
+                                       Foreground="White"
+                                       FontWeight="Bold"
+                                       FontSize="17"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                        </Border>
+                        <Ellipse Width="13" Height="13"
+                                 Fill="{StaticResource OnlineBrush}"
+                                 Stroke="{StaticResource BgHeaderBrush}"
+                                 StrokeThickness="2.5"
+                                 HorizontalAlignment="Right"
+                                 VerticalAlignment="Bottom"/>
+                    </Grid>
+
+                    <!-- Name + connection status -->
+                    <StackPanel Grid.Column="1"
+                                Margin="10 0 0 0"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="{Binding OwnDisplayName}"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   FontWeight="SemiBold"
+                                   FontSize="14"/>
+                        <StackPanel Orientation="Horizontal" Margin="0 2 0 0">
+                            <Ellipse Width="7" Height="7"
+                                     Margin="0 0 5 0"
+                                     VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="{StaticResource DangerBrush}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsServiceConnected}" Value="True">
+                                                <Setter Property="Fill" Value="{StaticResource OnlineBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource TextSecondaryBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Dienst nicht verbunden"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsServiceConnected}" Value="True">
+                                                <Setter Property="Text" Value="Online · Ende-zu-Ende verschlüsselt"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Action buttons -->
+                    <StackPanel Grid.Column="2"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Button Style="{StaticResource IconBtn}"
+                                FontSize="18"
+                                Content="+"
+                                Command="{Binding AddContactCommand}"
+                                ToolTip="Kontakt manuell hinzufügen (per IP)"/>
+                        <Button Style="{StaticResource IconBtn}"
+                                FontSize="15"
+                                Content="↻"
+                                Command="{Binding RefreshContactsCommand}"
+                                ToolTip="Kontakte aktualisieren"
+                                Margin="2 0 0 0"/>
+                        <Button Style="{StaticResource IconBtn}"
+                                FontSize="16"
+                                Content="⚙"
+                                Command="{Binding OpenSettingsCommand}"
+                                ToolTip="Einstellungen"
+                                Margin="2 0 0 0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ── SEARCH BAR ─────────────────────────────────────── -->
+            <Border Grid.Row="1"
+                    Background="{StaticResource BgSidebarBrush}"
+                    Padding="12 8">
+                <Border Background="{StaticResource BgSearchBrush}"
+                        CornerRadius="10"
+                        Padding="10 7">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="🔍"
+                                   FontSize="13"
+                                   Margin="0 0 7 0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <Grid Grid.Column="1">
+                            <!-- Placeholder text -->
+                            <TextBlock Text="Suchen…"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="13"
+                                       VerticalAlignment="Center"
+                                       IsHitTestVisible="False"
+                                       Visibility="{Binding IsSearchEmpty, Converter={StaticResource BoolToVis}}"/>
+                            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource PlainTextBox}"
+                                     FontSize="13"
+                                     VerticalAlignment="Center"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Border>
+
+            <!-- ── CONTACTS LIST ──────────────────────────────────── -->
+            <ListBox Grid.Row="2"
+                     ItemsSource="{Binding FilteredContacts}"
+                     SelectedItem="{Binding SelectedContact}"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
+
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding"         Value="0"/>
+                        <Setter Property="BorderThickness" Value="0"/>
+                        <Setter Property="Cursor"          Value="Hand"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Bd"
+                                            Background="Transparent"
+                                            BorderBrush="{StaticResource BorderLightBrush}"
+                                            BorderThickness="0 0 0 1">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background"
+                                                    Value="{StaticResource BgItemSelectedBrush}"/>
+                                        </Trigger>
+                                        <MultiTrigger>
+                                            <MultiTrigger.Conditions>
+                                                <Condition Property="IsMouseOver" Value="True"/>
+                                                <Condition Property="IsSelected"  Value="False"/>
+                                            </MultiTrigger.Conditions>
+                                            <Setter TargetName="Bd" Property="Background"
+                                                    Value="{StaticResource BgItemHoverBrush}"/>
+                                        </MultiTrigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:ContactViewModel}">
+                        <Grid Margin="14 10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="50"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Avatar + online indicator -->
+                            <Grid Grid.Column="0">
+                                <Border Width="44" Height="44"
+                                        CornerRadius="22"
+                                        Background="#2B4E6E">
+                                    <TextBlock Text="{Binding FirstLetter}"
+                                               Foreground="White"
+                                               FontWeight="Bold"
+                                               FontSize="17"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                </Border>
+                                <!-- Online dot overlay -->
+                                <Border Width="14" Height="14"
+                                        CornerRadius="7"
+                                        Background="{StaticResource OnlineBrush}"
+                                        BorderBrush="{StaticResource BgSidebarBrush}"
+                                        BorderThickness="2"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Bottom"
+                                        Visibility="{Binding IsOnline, Converter={StaticResource BoolToVis}}"/>
+                            </Grid>
+
+                            <!-- Name + last message -->
+                            <StackPanel Grid.Column="1"
+                                        Margin="11 0 6 0"
+                                        VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding DisplayName}"
+                                               Foreground="{StaticResource TextPrimaryBrush}"
+                                               FontWeight="SemiBold"
+                                               FontSize="14"
+                                               MaxWidth="155"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text=" 🔒"
+                                               FontSize="10"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource TextMutedBrush}"
+                                               ToolTip="Ende-zu-Ende verschlüsselt"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding LastMessagePreview}"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="12"
+                                           MaxWidth="175"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0 2 0 0"/>
+                            </StackPanel>
+
+                            <!-- Timestamp + unread badge -->
+                            <StackPanel Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Right">
+                                <TextBlock Text="{Binding LastSeen, Converter={StaticResource DateToShort}}"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="11"
+                                           HorizontalAlignment="Right"
+                                           Margin="0 0 0 5"/>
+                                <Border Background="{StaticResource AccentBrush}"
+                                        CornerRadius="9"
+                                        MinWidth="19" Height="19"
+                                        Padding="5 0"
+                                        HorizontalAlignment="Right"
+                                        Visibility="{Binding HasUnread, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding UnreadCount}"
+                                               Foreground="White"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- ── ENCRYPTION FOOTER ──────────────────────────────── -->
+            <Border Grid.Row="3"
+                    Background="{StaticResource BgHeaderBrush}"
+                    Padding="12 7">
+                <TextBlock HorizontalAlignment="Center"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="10">
+                    🔐 RSA-2048 Schlüsselaustausch  ·  AES-256-CBC Nachrichten
+                </TextBlock>
+            </Border>
+        </Grid>
+
+        <!-- ╔══════════════════════════════════╗ -->
+        <!-- ║          MAIN CONTENT            ║ -->
+        <!-- ╚══════════════════════════════════╝ -->
+        <Grid Grid.Column="1" Background="{StaticResource BgMainBrush}">
+
+            <!-- LEER-ZUSTAND ────────────────────────────────────────── -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Visibility="{Binding ActiveChat, Converter={StaticResource NullToInvVis}}">
+
+                <Border Width="90" Height="90"
+                        CornerRadius="45"
+                        Background="{StaticResource BgHeaderBrush}"
+                        HorizontalAlignment="Center">
+                    <TextBlock Text="🔒"
+                               FontSize="40"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                </Border>
+
+                <TextBlock Text="EncryptedMessenger"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           FontSize="24"
+                           FontWeight="Light"
+                           HorizontalAlignment="Center"
+                           Margin="0 20 0 8"/>
+
+                <TextBlock Text="Wähle einen Kontakt, um einen verschlüsselten Chat zu starten."
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           FontSize="14"
+                           HorizontalAlignment="Center"/>
+
+                <!-- Add contact CTA -->
+                <Button Content="➕  Kontakt per IP hinzufügen"
+                        Style="{StaticResource PrimaryBtn}"
+                        Command="{Binding AddContactCommand}"
+                        HorizontalAlignment="Center"
+                        Margin="0 22 0 0"
+                        Padding="22 11"/>
+
+                <!-- Feature badges -->
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Center"
+                            Margin="0 28 0 0">
+                    <Border Background="{StaticResource BgHeaderBrush}"
+                            CornerRadius="8" Padding="12 7" Margin="4 0">
+                        <TextBlock Text="🔑  RSA-2048"
+                                   Foreground="{StaticResource AccentBrush}"
+                                   FontSize="12"/>
+                    </Border>
+                    <Border Background="{StaticResource BgHeaderBrush}"
+                            CornerRadius="8" Padding="12 7" Margin="4 0">
+                        <TextBlock Text="🛡  AES-256"
+                                   Foreground="{StaticResource AccentBrush}"
+                                   FontSize="12"/>
+                    </Border>
+                    <Border Background="{StaticResource BgHeaderBrush}"
+                            CornerRadius="8" Padding="12 7" Margin="4 0">
+                        <TextBlock Text="📡  P2P Wi-Fi"
+                                   Foreground="{StaticResource AccentBrush}"
+                                   FontSize="12"/>
+                    </Border>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- AKTIVER CHAT ─────────────────────────────────────────── -->
+            <!-- AKTIVER CHAT ─────────────────────────────────────────── -->
+            <views:ChatView DataContext="{Binding ActiveChat}"
+                            Visibility="{Binding DataContext.ActiveChat,
+                                         RelativeSource={RelativeSource AncestorType=Window},
+                                         Converter={StaticResource NullToVis}}"/>
+        </Grid>
+    </Grid>
+</Window>

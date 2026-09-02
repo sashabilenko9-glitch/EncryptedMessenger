@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="EncryptedMessenger.Core/EncryptedMessenger.Core.csproj" />
+  <Project Path="EncryptedMessenger.WindowsService/EncryptedMessenger.WindowsService.csproj" />
+  <Project Path="EncryptedMessenger.WPF/EncryptedMessenger.WPF.csproj" />
+</Solution>

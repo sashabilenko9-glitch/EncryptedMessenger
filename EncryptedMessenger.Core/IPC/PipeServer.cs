@@ -1,0 +1,95 @@
+using System.IO.Pipes;
+using System.Text;
+
+namespace EncryptedMessenger.Core.IPC
+{
+    /// <summary>
+    /// Named-pipe server that the Windows Service hosts.
+    /// The WPF application connects as a client to send commands and receive events.
+    ///
+    /// Each UI connection gets its own pipe instance (multi-client support).
+    /// </summary>
+    public sealed class PipeServer : IDisposable
+    {
+        public const string PipeName = "EncryptedMessengerPipe";
+
+        public event EventHandler<PipeMessage>? MessageReceived;
+
+        private CancellationTokenSource _cts = new();
+
+        // All active writer streams (one per connected UI instance)
+        private readonly List<PipeStream> _clients = [];
+        private readonly object _clientsLock = new();
+
+        // ── Lifecycle ─────────────────────────────────────────────────────
+
+        public Task StartAsync() => AcceptLoopAsync(_cts.Token);
+
+        public void Stop() => _cts.Cancel();
+
+        // ── Accept loop ───────────────────────────────────────────────────
+
+        private async Task AcceptLoopAsync(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var pipe = new NamedPipeServerStream(
+                    PipeName,
+                    PipeDirection.InOut,
+                    NamedPipeServerStream.MaxAllowedServerInstances,
+                    PipeTransmissionMode.Message,
+                    PipeOptions.Asynchronous);
+
+                try
+                {
+                    await pipe.WaitForConnectionAsync(ct);
+                    lock (_clientsLock) _clients.Add(pipe);
+                    _ = Task.Run(() => HandleClientAsync(pipe, ct), ct);
+                }
+                catch (OperationCanceledException) { pipe.Dispose(); break; }
+                catch { pipe.Dispose(); }
+            }
+        }
+
+        private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken ct)
+        {
+            try
+            {
+                using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
+                while (!ct.IsCancellationRequested && pipe.IsConnected)
+                {
+                    var line = await reader.ReadLineAsync(ct);
+                    if (line == null) break;
+                    try { MessageReceived?.Invoke(this, PipeMessage.FromJson(line)); }
+                    catch { /* malformed JSON */ }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch { }
+            finally
+            {
+                lock (_clientsLock) _clients.Remove(pipe);
+                pipe.Dispose();
+            }
+        }
+
+        // ── Broadcast to all connected UI clients ─────────────────────────
+
+        public async Task BroadcastAsync(PipeMessage message)
+        {
+            var json = message.ToJson() + "\n";
+            var data = Encoding.UTF8.GetBytes(json);
+
+            List<PipeStream> snapshot;
+            lock (_clientsLock) snapshot = [.._clients];
+
+            foreach (var client in snapshot)
+            {
+                try { await client.WriteAsync(data); await client.FlushAsync(); }
+                catch { /* client disconnected */ }
+            }
+        }
+
+        public void Dispose() => Stop();
+    }
+}
