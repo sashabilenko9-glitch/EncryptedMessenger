@@ -4,83 +4,70 @@ using System.Text;
 namespace EncryptedMessenger.Core.Encryption
 {
     /// <summary>
-    /// Static helpers for AES-256-CBC encryption used for message content.
-    /// Each session gets a fresh 256-bit key + 128-bit IV.
+    /// Static helpers for AES-256-GCM (authenticated encryption) used for message
+    /// and at-rest content. Unlike plain CBC, GCM detects any tampering with the
+    /// ciphertext: decryption throws instead of silently returning corrupted data.
+    ///
+    /// The 12-byte nonce is NOT generated here — callers (<see cref="CryptoManager"/>)
+    /// must supply a fresh, never-reused nonce per encryption for a given key, since
+    /// nonce reuse under GCM breaks both confidentiality and authenticity.
     /// </summary>
     public static class AesCryptoService
     {
+        public const int NonceSizeBytes = 12; // 96-bit, the recommended GCM nonce size
+        public const int TagSizeBytes   = 16; // 128-bit authentication tag
+
         // ── Key generation ────────────────────────────────────────────────
 
-        /// <summary>Generates a cryptographically random AES-256 key and IV.</summary>
-        public static (byte[] Key, byte[] IV) GenerateKeyAndIV()
-        {
-            using var aes = Aes.Create();
-            aes.KeySize = 256;
-            aes.GenerateKey();
-            aes.GenerateIV();
-            return (aes.Key, aes.IV);
-        }
+        /// <summary>Generates a cryptographically random AES-256 key.</summary>
+        public static byte[] GenerateKey() => RandomNumberGenerator.GetBytes(32);
+
+        /// <summary>Generates a cryptographically random 96-bit GCM nonce.</summary>
+        public static byte[] GenerateNonce() => RandomNumberGenerator.GetBytes(NonceSizeBytes);
 
         // ── String encrypt / decrypt ──────────────────────────────────────
 
-        /// <summary>Encrypts a UTF-8 string; returns raw cipher bytes.</summary>
-        public static byte[] Encrypt(string plainText, byte[] key, byte[] iv)
-        {
-            using var aes = CreateAes(key, iv);
-            using var encryptor = aes.CreateEncryptor();
-            using var ms  = new MemoryStream();
-            using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
-            using (var sw = new StreamWriter(cs, Encoding.UTF8))
-                sw.Write(plainText);
+        /// <summary>Encrypts a UTF-8 string; returns ciphertext with the auth tag appended.</summary>
+        public static byte[] Encrypt(string plainText, byte[] key, byte[] nonce)
+            => EncryptBytes(Encoding.UTF8.GetBytes(plainText), key, nonce);
 
-            return ms.ToArray();
-        }
-
-        /// <summary>Decrypts cipher bytes back to a UTF-8 string.</summary>
-        public static string Decrypt(byte[] cipherBytes, byte[] key, byte[] iv)
-        {
-            using var aes = CreateAes(key, iv);
-            using var decryptor = aes.CreateDecryptor();
-            using var ms  = new MemoryStream(cipherBytes);
-            using var cs  = new CryptoStream(ms, decryptor, CryptoStreamMode.Read);
-            using var sr  = new StreamReader(cs, Encoding.UTF8);
-            return sr.ReadToEnd();
-        }
+        /// <summary>
+        /// Decrypts ciphertext+tag back to a UTF-8 string.
+        /// Throws <see cref="AuthenticationTagMismatchException"/> if the data was tampered with.
+        /// </summary>
+        public static string Decrypt(byte[] cipherAndTag, byte[] key, byte[] nonce)
+            => Encoding.UTF8.GetString(DecryptBytes(cipherAndTag, key, nonce));
 
         // ── Binary encrypt / decrypt ──────────────────────────────────────
 
-        public static byte[] EncryptBytes(byte[] data, byte[] key, byte[] iv)
+        /// <summary>Encrypts raw bytes; returns ciphertext with the auth tag appended.</summary>
+        public static byte[] EncryptBytes(byte[] data, byte[] key, byte[] nonce)
         {
-            using var aes = CreateAes(key, iv);
-            using var encryptor = aes.CreateEncryptor();
-            using var ms  = new MemoryStream();
-            using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
-                cs.Write(data, 0, data.Length);
+            using var aes = new AesGcm(key, TagSizeBytes);
+            var cipher = new byte[data.Length];
+            var tag = new byte[TagSizeBytes];
+            aes.Encrypt(nonce, data, cipher, tag);
 
-            return ms.ToArray();
+            var result = new byte[cipher.Length + TagSizeBytes];
+            Buffer.BlockCopy(cipher, 0, result, 0, cipher.Length);
+            Buffer.BlockCopy(tag, 0, result, cipher.Length, TagSizeBytes);
+            return result;
         }
 
-        public static byte[] DecryptBytes(byte[] cipherBytes, byte[] key, byte[] iv)
+        /// <summary>
+        /// Decrypts ciphertext+tag back to raw bytes.
+        /// Throws <see cref="AuthenticationTagMismatchException"/> if the data was tampered with.
+        /// </summary>
+        public static byte[] DecryptBytes(byte[] cipherAndTag, byte[] key, byte[] nonce)
         {
-            using var aes = CreateAes(key, iv);
-            using var decryptor = aes.CreateDecryptor();
-            using var ms     = new MemoryStream(cipherBytes);
-            using var cs     = new CryptoStream(ms, decryptor, CryptoStreamMode.Read);
-            using var output = new MemoryStream();
-            cs.CopyTo(output);
-            return output.ToArray();
-        }
+            var cipherLen = cipherAndTag.Length - TagSizeBytes;
+            var cipher = cipherAndTag[..cipherLen];
+            var tag = cipherAndTag[cipherLen..];
 
-        // ── Private helper ────────────────────────────────────────────────
-
-        private static Aes CreateAes(byte[] key, byte[] iv)
-        {
-            var aes = Aes.Create();
-            aes.Key     = key;
-            aes.IV      = iv;
-            aes.Mode    = CipherMode.CBC;
-            aes.Padding = PaddingMode.PKCS7;
-            return aes;
+            using var aes = new AesGcm(key, TagSizeBytes);
+            var plain = new byte[cipherLen];
+            aes.Decrypt(nonce, cipher, tag, plain);
+            return plain;
         }
     }
 }

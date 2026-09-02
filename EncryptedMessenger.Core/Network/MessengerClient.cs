@@ -24,6 +24,7 @@ namespace EncryptedMessenger.Core.Network
         private CancellationTokenSource _cts = new();
 
         public string ContactId { get; private set; } = string.Empty;
+        public string PeerPublicKeyXml { get; private set; } = string.Empty;
         public bool IsConnected => _tcp?.Connected ?? false;
 
         public MessengerClient(string ownId, CryptoManager crypto, ILogger? logger = null)
@@ -69,6 +70,7 @@ namespace EncryptedMessenger.Core.Network
 
             ContactId = kePkt.SenderId;
             var peerPublicKey = kePkt.Payload;
+            PeerPublicKeyXml = peerPublicKey;
             _logger.LogDebug("Got peer key, contactId={ContactId}", ContactId);
 
             // 2. Send own public key

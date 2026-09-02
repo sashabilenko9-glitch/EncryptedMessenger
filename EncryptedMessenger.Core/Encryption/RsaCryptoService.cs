@@ -50,6 +50,22 @@ namespace EncryptedMessenger.Core.Encryption
         public byte[] DecryptWithPrivateKey(byte[] cipherData)
             => _rsa.Decrypt(cipherData, RSAEncryptionPadding.OaepSHA256);
 
+        // ── Key fingerprint (MITM detection) ───────────────────────────────
+
+        /// <summary>
+        /// Computes a SHA-256 fingerprint of a public key (XML form), formatted as
+        /// uppercase hex in 4-character groups (e.g. "A1B2 C3D4 ..."), for the user
+        /// to manually compare with what the peer sees out-of-band. A mismatch means
+        /// the key in this handshake is not the one the peer actually holds — either
+        /// a reinstall or an active man-in-the-middle substituting their own key.
+        /// </summary>
+        public static string ComputeFingerprint(string publicKeyXml)
+        {
+            var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(publicKeyXml));
+            var hex = Convert.ToHexString(hash); // 64 uppercase hex chars
+            return string.Join(' ', Enumerable.Range(0, hex.Length / 4).Select(i => hex.Substring(i * 4, 4)));
+        }
+
         // ── Digital signature (optional integrity check) ──────────────────
 
         public byte[] Sign(byte[] data)

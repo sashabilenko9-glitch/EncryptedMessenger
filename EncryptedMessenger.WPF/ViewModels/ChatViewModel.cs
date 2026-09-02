@@ -51,6 +51,23 @@ namespace EncryptedMessenger.WPF.ViewModels
             IsContactOnline ? "Online" :
                               "Offline";
 
+        // ── Security (key fingerprint) ───────────────────────────────────
+        private string _fingerprint = string.Empty;
+        /// <summary>SHA-256 fingerprint of the peer's public key from the last handshake, for manual out-of-band verification.</summary>
+        public string Fingerprint
+        {
+            get => _fingerprint;
+            private set => SetField(ref _fingerprint, value);
+        }
+
+        private bool _keyChanged;
+        /// <summary>True when this handshake's key differs from a previously known key for this contact — possible reinstall or MITM.</summary>
+        public bool KeyChanged
+        {
+            get => _keyChanged;
+            private set => SetField(ref _keyChanged, value);
+        }
+
         // ── Messages ──────────────────────────────────────────────────────
         public ObservableCollection<MessageViewModel> Messages { get; } = [];
 
@@ -137,6 +154,15 @@ namespace EncryptedMessenger.WPF.ViewModels
         {
             IsConnecting = false;
             IsContactOnline = online;
+        }
+
+        /// <summary>Called by MainViewModel when the service reports the peer's key fingerprint after a handshake.</summary>
+        public void SetKeyFingerprint(string fingerprint, bool changed)
+        {
+            Fingerprint = fingerprint;
+            KeyChanged = changed;
+            if (changed)
+                _logger.LogWarning("Key fingerprint for {ContactId} changed: {Fingerprint}", _contact.Id, fingerprint);
         }
 
         /// <summary>

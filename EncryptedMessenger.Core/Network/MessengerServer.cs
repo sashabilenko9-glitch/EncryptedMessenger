@@ -119,6 +119,7 @@ namespace EncryptedMessenger.Core.Network
                     return;
                 }
                 contactId = kePkt.SenderId;
+                var peerPublicKey = kePkt.Payload;
                 _logger.LogDebug("Got peer key, contactId={ContactId}", Short(contactId));
 
                 // 3. Receive encrypted AES session key
@@ -132,7 +133,7 @@ namespace EncryptedMessenger.Core.Network
                 _logger.LogInformation("Handshake complete with {ContactId}", Short(contactId));
 
                 lock (_streamsLock) _activeStreams[contactId] = stream;
-                ContactConnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: true));
+                ContactConnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: true, peerPublicKey));
 
                 // 4. Receive loop
                 while (!ct.IsCancellationRequested && client.Connected)

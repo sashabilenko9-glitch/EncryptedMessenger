@@ -40,6 +40,20 @@ namespace EncryptedMessenger.Core.Database
         public Task<Contact?> GetByIpAsync(string ip)
             => db.RunAsync(d => d.Contacts.FirstOrDefaultAsync(c => c.IpAddress == ip));
 
+        /// <summary>
+        /// Updates just the stored public key for a contact, without touching
+        /// display name / IP / port (unlike <see cref="UpsertAsync"/>, which would
+        /// overwrite them with whatever partial <see cref="Contact"/> is passed in).
+        /// </summary>
+        public Task SetPublicKeyXmlAsync(string contactId, string publicKeyXml)
+            => db.RunAsync(async d =>
+            {
+                var c = await d.Contacts.FindAsync(contactId);
+                if (c == null) return;
+                c.PublicKeyXml = publicKeyXml;
+                await d.SaveChangesAsync();
+            });
+
         public Task UpdateLastSeenAsync(string contactId)
             => db.RunAsync(async d =>
             {

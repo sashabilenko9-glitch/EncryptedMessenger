@@ -56,9 +56,21 @@
                                 CornerRadius="4"
                                 Padding="6 2"
                                 Margin="10 0 0 0"
-                                VerticalAlignment="Center">
+                                VerticalAlignment="Center"
+                                ToolTip="{Binding Fingerprint, StringFormat='Schlüssel-Fingerabdruck: {0}'}">
                             <TextBlock Text="🔒 Verschlüsselt"
                                        Foreground="{StaticResource AccentBrush}"
+                                       FontSize="10"/>
+                        </Border>
+                        <Border Background="#5A1A1A"
+                                CornerRadius="4"
+                                Padding="6 2"
+                                Margin="6 0 0 0"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding KeyChanged, Converter={StaticResource BoolToVis}}"
+                                ToolTip="{Binding Fingerprint, StringFormat='Neuer Fingerabdruck: {0} — mit dem Kontakt vergleichen!'}">
+                            <TextBlock Text="⚠ Schlüssel geändert"
+                                       Foreground="#FF8080"
                                        FontSize="10"/>
                         </Border>
                     </StackPanel>

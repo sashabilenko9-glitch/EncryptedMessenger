@@ -24,6 +24,7 @@ namespace EncryptedMessenger.Core.IPC
         DeliveryAck        = 103,
         ContactList        = 104,
         MessageHistory     = 105,
+        KeyFingerprint     = 106,
 
         // Bidirectional
         Heartbeat        = 200,
@@ -56,6 +57,13 @@ namespace EncryptedMessenger.Core.IPC
     public record AddContactPayload(string DisplayName, string IpAddress, int Port);
     public record ConnectPayload(string ContactId);
     public record ContactIdChangedPayload(string OldId, string NewId);
+
+    /// <summary>
+    /// Sent to the UI right after a handshake completes. <paramref name="Changed"/> is true
+    /// when this contact previously had a different key on file — a signal to the user that
+    /// this may not be the same peer as last time (reinstall, or a possible MITM).
+    /// </summary>
+    public record KeyFingerprintPayload(string ContactId, string Fingerprint, bool Changed);
 
 
 

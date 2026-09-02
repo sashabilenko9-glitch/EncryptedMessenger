@@ -40,11 +40,13 @@ The UI and the service communicate over a **named pipe** (JSON messages). If no 
 
 ## Security model
 
-- Each instance generates an **RSA-2048** key pair on first run; the private key never leaves the machine.
-- For every session a random **AES-256** key + IV is generated, encrypted with the peer's public RSA key (**RSA-OAEP with SHA-256**) and sent over.
-- Messages are then encrypted with **AES-256-CBC (PKCS7)** using that session key.
+- Each instance generates an **RSA-2048** key pair on first run; the private key is **DPAPI-protected** on disk (only readable by that Windows account on that machine) and never leaves it.
+- For every session a random **AES-256** key is generated, encrypted with the peer's public RSA key (**RSA-OAEP with SHA-256**) and sent over.
+- Messages are encrypted with **AES-256-GCM** (authenticated encryption) using that session key, with a fresh random nonce per message — tampering with a message in transit causes decryption to fail rather than silently returning corrupted data.
+- Local chat history is separately encrypted at rest with a persistent per-install AES-256-GCM key, independent of the per-session keys.
+- After each handshake, both sides can see a **SHA-256 fingerprint** of the peer's public key (shown in the chat header) to manually verify out-of-band that no one substituted a different key. If a contact's key ever changes from what was seen before, the app flags it in the UI.
 
-> **Note:** This is a study project. It does not currently authenticate peers or protect against active man-in-the-middle attacks (no public-key fingerprint verification). It is intended for confidential messaging inside a trusted local network.
+> **Note:** This is a study project. Fingerprint verification is manual (no automated trust-on-first-use pinning beyond the change-detection above), so an active man-in-the-middle is only *detectable*, not automatically blocked. It is intended for confidential messaging inside a trusted local network.
 
 ## Tech stack
 

@@ -147,6 +147,12 @@ namespace EncryptedMessenger.WPF.ViewModels
                         var hist = msg.Deserialize<List<Message>>();
                         ActiveChat?.PopulateHistory(hist);
                         break;
+
+                    case PipeMessageType.KeyFingerprint:
+                        var fp = msg.Deserialize<KeyFingerprintPayload>();
+                        if (ActiveChat?.ContactId == fp.ContactId)
+                            ActiveChat.SetKeyFingerprint(fp.Fingerprint, fp.Changed);
+                        break;
                 }
             });
         }

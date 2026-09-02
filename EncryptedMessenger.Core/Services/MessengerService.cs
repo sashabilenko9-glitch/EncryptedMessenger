@@ -167,8 +167,10 @@ namespace EncryptedMessenger.Core.Services
             // After the handshake we know the peer's REAL UserId (client.ContactId).
             // If we connected via a manual "manual_ip_port" contact, relink it.
             var realId = client.ContactId;
+            var finalId = recipientId;
             if (!string.IsNullOrEmpty(realId) && realId != recipientId)
             {
+                finalId = realId;
                 await _contactRepo.MergeManualContactAsync(recipientId, realId);
 
                 await _pipeServer.BroadcastAsync(PipeMessage.Create(
@@ -178,13 +180,43 @@ namespace EncryptedMessenger.Core.Services
                 var refreshed = await _contactRepo.GetAllAsync();
                 await _pipeServer.BroadcastAsync(
                     PipeMessage.Create(PipeMessageType.ContactList, refreshed));
-
-                _clients[realId] = client;
-                return client;
             }
 
-            _clients[recipientId] = client;
+            await VerifyAndStorePeerKeyAsync(finalId, client.PeerPublicKeyXml);
+
+            _clients[finalId] = client;
             return client;
+        }
+
+        /// <summary>
+        /// Persists the peer's public key for this contact, computes its fingerprint,
+        /// and warns (log + UI notification) if it differs from a previously known key
+        /// for the same contact — likely a reinstall on their side, or a man-in-the-middle
+        /// substituting a different key during the handshake.
+        /// </summary>
+        private async Task VerifyAndStorePeerKeyAsync(string contactId, string publicKeyXml)
+        {
+            if (string.IsNullOrEmpty(publicKeyXml)) return;
+
+            var contact = await _contactRepo.GetByIdAsync(contactId);
+            var previousKey = contact?.PublicKeyXml;
+            var changed = !string.IsNullOrEmpty(previousKey) && previousKey != publicKeyXml;
+            var fingerprint = RsaCryptoService.ComputeFingerprint(publicKeyXml);
+
+            if (changed)
+            {
+                _logger.LogWarning(
+                    "SECURITY: public key for contact {ContactId} changed since last time " +
+                    "(possible reinstall, or a man-in-the-middle). New fingerprint: {Fingerprint}",
+                    contactId, fingerprint);
+            }
+
+            if (contact != null)
+                await _contactRepo.SetPublicKeyXmlAsync(contactId, publicKeyXml);
+
+            await _pipeServer.BroadcastAsync(PipeMessage.Create(
+                PipeMessageType.KeyFingerprint,
+                new KeyFingerprintPayload(contactId, fingerprint, changed)));
         }
 
         // ── Event handlers ────────────────────────────────────────────────
@@ -230,6 +262,8 @@ namespace EncryptedMessenger.Core.Services
         private async void OnContactConnected(object? _, ContactStatusEventArgs e)
         {
             await _contactRepo.UpdateLastSeenAsync(e.ContactId);
+            if (e.PublicKeyXml != null)
+                await VerifyAndStorePeerKeyAsync(e.ContactId, e.PublicKeyXml);
             await _pipeServer.BroadcastAsync(PipeMessage.Create(
                 PipeMessageType.ContactOnline,
                 new ContactStatusPayload(e.ContactId, true)));
