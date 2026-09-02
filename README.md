@@ -77,6 +77,14 @@ Or open `EncryptedMessenger.slnx` in Visual Studio and run the **EncryptedMessen
 
 To test on a single machine, start two instances with different ports (see Settings).
 
+### Publish a standalone .exe
+
+```bash
+dotnet publish EncryptedMessenger.WPF -c Release
+```
+
+Produces a single self-contained `EncryptedMessenger.exe` (in `EncryptedMessenger.WPF/bin/Release/net8.0-windows/win-x64/publish/`) that runs on any Windows 10/11 machine with **no .NET install required** — copy it to a USB drive or share it directly.
+
 ### Optional: install the background service
 
 ```bash

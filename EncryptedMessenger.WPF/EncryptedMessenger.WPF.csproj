@@ -8,6 +8,22 @@
     <RootNamespace>EncryptedMessenger.WPF</RootNamespace>
     <AssemblyName>EncryptedMessenger</AssemblyName>
   </PropertyGroup>
+  <!--
+    Self-contained single-file deployment, Release-only so day-to-day Debug
+    builds stay fast and don't need a restored runtime pack.
+    `dotnet publish -c Release` then produces one EncryptedMessenger.exe
+    that runs on a Windows 10/11 machine with no .NET install required.
+  -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- WPF depends on native (unmanaged) DirectX interop DLLs that can't be
+         loaded from inside the bundled single-file image; this extracts them
+         to %TEMP% on first run so the graphics subsystem can find them. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\EncryptedMessenger.Core\EncryptedMessenger.Core.csproj" />
   </ItemGroup>
