@@ -100,6 +100,19 @@ namespace EncryptedMessenger.Tests
         }
 
         [Fact]
+        public async Task Discovery_FillsAPlaceholderName_ButNeverRenamesAKnownContact()
+        {
+            await _contacts.PinOrVerifyKeyAsync("peer-with-placeholder", "<k1/>");   // name = placeholder
+            await _contacts.MarkRequestSentAsync(Peer("carol-id", name: "Carol (typed)"));
+
+            await _contacts.ApplyDiscoveryAsync(Peer("peer-with-placeholder", name: "Dave"), TimeSpan.FromMinutes(1));
+            await _contacts.ApplyDiscoveryAsync(Peer("carol-id", name: "Evil rename"), TimeSpan.FromMinutes(1));
+
+            Assert.Equal("Dave", (await _contacts.GetByIdAsync("peer-with-placeholder"))!.DisplayName);
+            Assert.Equal("Carol (typed)", (await _contacts.GetByIdAsync("carol-id"))!.DisplayName);
+        }
+
+        [Fact]
         public async Task EnsureWithAddress_FillsMissingIp_ButNeverOverwritesOne()
         {
             await _contacts.PinOrVerifyKeyAsync("x", "<k/>");   // row without an address

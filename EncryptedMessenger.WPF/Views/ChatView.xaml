@@ -5,18 +5,18 @@
     <Grid Background="{StaticResource BgMainBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="62"/>
-            <!-- ① Chat-Header       -->
+            <!-- ① Chat header         -->
             <RowDefinition Height="Auto"/>
             <!-- ①b Key-change banner (only while KeyChanged) -->
             <RowDefinition Height="*"/>
-            <!-- ② Nachrichten-Liste -->
+            <!-- ② Message list        -->
             <RowDefinition Height="Auto"/>
-            <!-- ③ Lade-Indikator    -->
+            <!-- ③ Sending indicator   -->
             <RowDefinition Height="Auto"/>
-            <!-- ④ Eingabezeile      -->
+            <!-- ④ Input row           -->
         </Grid.RowDefinitions>
 
-        <!-- ═══════════ ① CHAT-HEADER ═══════════ -->
+        <!-- ═══════════ ① CHAT HEADER ═══════════ -->
         <Border Grid.Row="0"
                 Background="{StaticResource BgHeaderBrush}"
                 BorderBrush="{StaticResource BorderLightBrush}"
@@ -59,6 +59,7 @@
                                 Padding="6 2"
                                 Margin="10 0 0 0"
                                 VerticalAlignment="Center"
+                                Visibility="{Binding HasTrustedKey, Converter={StaticResource BoolToVis}}"
                                 ToolTip="{Binding Fingerprint, StringFormat='Schlüssel-Fingerabdruck: {0}'}">
                             <TextBlock Text="🔒 Verschlüsselt"
                                        Foreground="{StaticResource AccentBrush}"
@@ -176,7 +177,7 @@
             </Grid>
         </Border>
 
-        <!-- ═══════════ ② NACHRICHTEN-LISTE ═══════════ -->
+        <!-- ═══════════ ② MESSAGE LIST ═══════════ -->
         <ScrollViewer Grid.Row="2"
                       x:Name="MessageScroll"
                       VerticalScrollBarVisibility="Auto"
@@ -209,7 +210,7 @@
             </Grid>
         </ScrollViewer>
 
-        <!-- ═══════════ ③ SENDE-INDIKATOR ═══════════ -->
+        <!-- ═══════════ ③ SENDING INDICATOR ═══════════ -->
         <Border Grid.Row="3"
                 Background="{StaticResource BgMainBrush}"
                 Padding="22 4 0 0"
@@ -220,7 +221,7 @@
                        FontStyle="Italic"/>
         </Border>
 
-        <!-- ═══════════ ④ EINGABEZEILE ═══════════ -->
+        <!-- ═══════════ ④ INPUT ROW ═══════════ -->
         <Border Grid.Row="4"
                 Background="{StaticResource BgHeaderBrush}"
                 BorderBrush="{StaticResource BorderLightBrush}"
@@ -290,7 +291,7 @@
                         BorderThickness="1"
                         Padding="12 8">
                     <Grid>
-                        <!-- Placeholder – sichtbar wenn DraftText leer -->
+                        <!-- Placeholder – visible while DraftText is empty -->
                         <TextBlock Text="Nachricht schreiben…"
                                    Foreground="{StaticResource TextMutedBrush}"
                                    FontSize="13"

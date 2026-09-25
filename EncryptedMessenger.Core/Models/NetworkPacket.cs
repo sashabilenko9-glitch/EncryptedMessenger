@@ -2,7 +2,7 @@ namespace EncryptedMessenger.Core.Models
 {
     /// <summary>
     /// Wire-format packet exchanged over TCP between peers.
-    /// Serialized as JSON and length-prefixed (4-byte big-endian int32).
+    /// Serialized as JSON and length-prefixed (4-byte little-endian int32, see PacketHelper).
     /// </summary>
     public class NetworkPacket
     {
@@ -24,7 +24,7 @@ namespace EncryptedMessenger.Core.Models
         /// <summary>Payload = sender's RSA public key XML.</summary>
         KeyExchange  = 0,
 
-        /// <summary>Payload = AES key+IV (48 bytes) encrypted with recipient's RSA public key, Base64.</summary>
+        /// <summary>Payload = 32-byte AES-256 session key encrypted with the recipient's RSA public key (OAEP-SHA256), Base64. No IV: AES-GCM uses a fresh nonce per message.</summary>
         SessionKey   = 1,
 
         /// <summary>Payload = AES-encrypted message text, Base64.</summary>
@@ -39,8 +39,7 @@ namespace EncryptedMessenger.Core.Models
         /// <summary>Graceful disconnect notification.</summary>
         Disconnect   = 5,
 
-        /// <summary>Payload = display name – sent on connection to identify the peer.</summary>
-        Identity     = 6,
+        // 6 was "Identity" (never used). The numbers are the wire format — don't reuse 6.
 
         // ── Contact requests (sent over a handshaked, key-pinned connection) ──
 

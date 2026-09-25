@@ -47,7 +47,10 @@ namespace EncryptedMessenger.WindowsService
             catch (Exception ex)
             {
                 _logger.LogCritical(ex, "Fatal error in MessengerService.");
-                throw; // causes the service manager to restart the service
+                // Rethrow: the .NET host then stops (BackgroundServiceExceptionBehavior.StopHost)
+                // and the service ends as failed. Windows only restarts it if recovery actions
+                // are configured, e.g. sc failure EncryptedMessenger reset= 86400 actions= restart/5000
+                throw;
             }
             finally
             {

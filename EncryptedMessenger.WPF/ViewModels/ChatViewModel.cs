@@ -58,8 +58,11 @@ namespace EncryptedMessenger.WPF.ViewModels
         public string Fingerprint
         {
             get => _fingerprint;
-            private set => SetField(ref _fingerprint, value);
+            private set { SetField(ref _fingerprint, value); OnPropertyChanged(nameof(HasTrustedKey)); }
         }
+
+        /// <summary>A handshake with the pinned key happened, so "🔒 Verschlüsselt" is actually true.</summary>
+        public bool HasTrustedKey => !string.IsNullOrEmpty(Fingerprint);
 
         private bool _keyChanged;
         /// <summary>

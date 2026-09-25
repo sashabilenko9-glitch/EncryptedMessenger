@@ -10,32 +10,15 @@ namespace EncryptedMessenger.Core.Database
     /// </summary>
     public sealed class ContactRepository(AppDbContext db)
     {
-        public Task<Contact> UpsertAsync(Contact contact)
-            => db.RunAsync(async d =>
-            {
-                var existing = await d.Contacts.FindAsync(contact.Id);
-                if (existing == null)
-                {
-                    d.Contacts.Add(contact);
-                }
-                else
-                {
-                    existing.DisplayName = contact.DisplayName;
-                    existing.IpAddress = contact.IpAddress;
-                    existing.Port = contact.Port;
-                    existing.LastSeen = contact.LastSeen;
-                    if (contact.PublicKeyXml != null)
-                        existing.PublicKeyXml = contact.PublicKeyXml;
-                }
-                await d.SaveChangesAsync();
-                return existing ?? contact;
-            });
-
         /// <summary>
         /// Applies a discovery announcement to an ALREADY KNOWN peer (discovery never creates
         /// contacts — unknown peers only appear in the in-memory "nearby" list). Discovery
         /// repeats every few seconds, so this only writes when name/address changed or
         /// <see cref="Contact.LastSeen"/> is older than <paramref name="lastSeenResolution"/>.
+        ///
+        /// The announced name only replaces a placeholder name. A name the contact already has
+        /// (typed when adding by IP, or from their request) is kept: UDP announcements aren't
+        /// authenticated, so anyone on the LAN could otherwise rename a known contact.
         /// Returns the peer's state (null = unknown) and whether name/address changed.
         /// </summary>
         public Task<(ContactState? State, bool Changed)> ApplyDiscoveryAsync(Contact announced, TimeSpan lastSeenResolution)
@@ -44,13 +27,16 @@ namespace EncryptedMessenger.Core.Database
                 var existing = await d.Contacts.FindAsync(announced.Id);
                 if (existing == null) return ((ContactState?)null, false);
 
-                var changed = existing.DisplayName != announced.DisplayName
+                var takeName = existing.DisplayName == Contact.PlaceholderName(existing.Id)
+                               && !string.IsNullOrWhiteSpace(announced.DisplayName)
+                               && existing.DisplayName != announced.DisplayName;
+                var changed = takeName
                               || existing.IpAddress != announced.IpAddress
                               || existing.Port != announced.Port;
                 if (!changed && announced.LastSeen - existing.LastSeen < lastSeenResolution)
                     return (existing.State, false);
 
-                existing.DisplayName = announced.DisplayName;
+                if (takeName) existing.DisplayName = announced.DisplayName;
                 existing.IpAddress = announced.IpAddress;
                 existing.Port = announced.Port;
                 existing.LastSeen = announced.LastSeen;
@@ -244,9 +230,7 @@ namespace EncryptedMessenger.Core.Database
 
         /// <summary>
         /// Re-pins a contact to a different public key (after the user accepted a changed key),
-        /// without touching display name / IP / port (unlike <see cref="UpsertAsync"/>, which
-        /// would overwrite them with whatever partial <see cref="Contact"/> is passed in).
-        /// Also clears <see cref="Contact.Verified"/>: that confirmation was about the OLD key,
+        /// without touching display name / IP / port. Also clears <see cref="Contact.Verified"/>: that confirmation was about the OLD key,
         /// and silently carrying it over would vouch for a key nobody compared.
         /// </summary>
         public Task SetPublicKeyXmlAsync(string contactId, string publicKeyXml)

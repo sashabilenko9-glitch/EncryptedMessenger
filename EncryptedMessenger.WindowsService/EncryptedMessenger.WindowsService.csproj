@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>EncryptedMessenger.WindowsService</RootNamespace>
     <AssemblyName>EncryptedMessenger.Service</AssemblyName>
-    <!-- Produces a Windows Service executable (no console window) -->
+    <!-- Console exe that also runs as a Windows Service (AddWindowsService in Program.cs); x64 only, needs the .NET 8 runtime -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
   </PropertyGroup>

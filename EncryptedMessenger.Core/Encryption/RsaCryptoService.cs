@@ -66,18 +66,6 @@ namespace EncryptedMessenger.Core.Encryption
             return string.Join(' ', Enumerable.Range(0, hex.Length / 4).Select(i => hex.Substring(i * 4, 4)));
         }
 
-        // ── Digital signature (optional integrity check) ──────────────────
-
-        public byte[] Sign(byte[] data)
-            => _rsa.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-
-        public bool Verify(byte[] data, byte[] signature, string signerPublicKeyXml)
-        {
-            using var rsa = RSA.Create();
-            rsa.FromXmlString(signerPublicKeyXml);
-            return rsa.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        }
-
         public void Dispose() => _rsa.Dispose();
     }
 }

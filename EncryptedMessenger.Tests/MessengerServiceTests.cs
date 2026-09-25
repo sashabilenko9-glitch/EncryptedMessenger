@@ -11,6 +11,28 @@ using EncryptedMessenger.Core.Network;
 
 namespace EncryptedMessenger.Tests
 {
+    public class ListenerFailureTests
+    {
+        [Fact]
+        public async Task TcpPortInUse_IsReportedToTheUi()
+        {
+            var port = Net.FreeTcpPort();
+            var squatter = new System.Net.Sockets.TcpListener(IPAddress.Any, port) { ExclusiveAddressUse = true };
+            squatter.Start();
+            try
+            {
+                await using var bob = await ServiceHarness.StartAsync(tcpPort: port);
+
+                // Reported again whenever the UI asks for its lists (it usually connects after the failure).
+                await bob.SendUi(PipeMessageType.GetContacts, new { });
+
+                Assert.True(await Wait.Until(() => bob.Events.Any(m => m.Type == PipeMessageType.ListenerFailed
+                                                                      && m.Deserialize<int>() == port)));
+            }
+            finally { squatter.Stop(); }
+        }
+    }
+
     /// <summary>
     /// End-to-end: a real MessengerService ("Bob") driven through its pipe like the WPF UI,
     /// talking over TCP to scripted peers built from MessengerClient/MessengerServer.
@@ -55,7 +77,7 @@ namespace EncryptedMessenger.Tests
         private async Task<(MessengerServer Server, int Port, ConcurrentQueue<ContactControlEventArgs> Control)> ListeningPeer(string id, CryptoManager keys, int? port = null)
         {
             var p = port ?? Net.FreeTcpPort();
-            var server = new MessengerServer(p, id, id, keys);
+            var server = new MessengerServer(p, id, keys);
             var control = new ConcurrentQueue<ContactControlEventArgs>();
             server.ContactControlReceived += (_, e) => control.Enqueue(e);
             _ = Task.Run(server.StartAsync);
@@ -214,6 +236,40 @@ namespace EncryptedMessenger.Tests
 
             await _bob.SendUi(PipeMessageType.AcceptPeerKey, new AcceptPeerKeyPayload("ALICE", impostorKeys.OwnFingerprint));
             Assert.True(await Wait.Until(() => StoredContact("ALICE").Result?.PublicKeyXml == impostorKeys.PublicKeyXml));
+        }
+
+        [Fact]
+        public async Task RequestByIp_AnsweredWithADifferentKey_IsFlaggedOnTheRequest()
+        {
+            (await AcceptedAlice(_peerKeys.NewKeys("alice"))).Dispose();   // pins Alice's real key
+            var (_, port, _) = await ListeningPeer("ALICE", _peerKeys.NewKeys("impostor"));
+
+            await _bob.SendUi(PipeMessageType.AddContact, new AddContactPayload("Alice?", "127.0.0.1", port));
+
+            var manualId = $"manual_127.0.0.1_{port}";
+            Assert.True(await Wait.Until(() => _bob.Requests().Any(r => r.ContactId == manualId && r.KeyRejected)),
+                        "the pending request should say the key was refused");
+            Assert.Contains(_bob.Events, m => m.Type == PipeMessageType.KeyFingerprint
+                && m.Deserialize<KeyFingerprintPayload>() is { Changed: true } p && p.ViaContactId == manualId);
+        }
+
+        [Fact]
+        public async Task ReopeningAChat_OnAnOpenConnection_StillSendsKeyAndCode()
+        {
+            var (carol, port, _) = await ListeningPeer("CAROL", _peerKeys.NewKeys("carol"));
+            await _bob.SendUi(PipeMessageType.AddContact, new AddContactPayload("Carol", "127.0.0.1", port));
+            Assert.True(await Wait.Until(() => _bob.Requests().Any(r => r.ContactId == "CAROL")));
+            await carol.SendControlAsync(_bob.BobId, PacketType.ContactAccept);
+            Assert.True(await Wait.Until(() => _bob.Contacts().Any(c => c.Id == "CAROL")));
+
+            // The outbound connection to Carol is already open; opening the chat again must not
+            // leave it without fingerprint / verification code.
+            _bob.Events.Clear();
+            await _bob.SendUi(PipeMessageType.Connect, new ConnectPayload("CAROL"));
+
+            Assert.True(await Wait.Until(() => _bob.Events.Any(m => m.Type == PipeMessageType.KeyFingerprint
+                && m.Deserialize<KeyFingerprintPayload>() is { Changed: false, ContactId: "CAROL" } p
+                && !string.IsNullOrEmpty(p.VerificationCode))));
         }
 
         // ── read receipts ────────────────────────────────────────────────

@@ -11,7 +11,6 @@
             <!-- ═══ CONVERTER REGISTRY ═══ -->
             <conv:BoolToAlignmentConverter          x:Key="BoolToAlignment"/>
             <conv:BoolToBubbleColorConverter        x:Key="BoolToBubble"/>
-            <conv:BoolToTextColorConverter          x:Key="BoolToTextColor"/>
             <conv:MessageStatusConverter            x:Key="StatusToGlyph"/>
             <conv:MessageStatusColorConverter       x:Key="StatusToColor"/>
             <conv:BoolToVisibilityConverter         x:Key="BoolToVis"/>
@@ -52,7 +51,7 @@
                 <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
             </Style>
 
-            <!-- Plain TextBox (без рамки/фона, для использования внутри своего Border) -->
+            <!-- Plain TextBox (no border/background, for use inside a custom Border) -->
             <Style x:Key="PlainTextBox" TargetType="TextBox">
                 <Setter Property="Background"      Value="Transparent"/>
                 <Setter Property="BorderThickness" Value="0"/>
@@ -99,7 +98,7 @@
                 </Setter>
             </Style>
 
-            <!-- TextBox (обычный, с рамкой) -->
+            <!-- TextBox (default, with border) -->
             <Style TargetType="TextBox">
                 <Setter Property="Background"      Value="{StaticResource BgInputBrush}"/>
                 <Setter Property="Foreground"      Value="{StaticResource TextPrimaryBrush}"/>

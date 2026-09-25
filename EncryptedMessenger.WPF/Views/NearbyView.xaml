@@ -80,6 +80,10 @@
                                             <!-- Compare this with the requester before accepting (phone / in person) -->
                                             <TextBlock Text="{Binding CodeText}" Foreground="{StaticResource AccentBrush}"
                                                        FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0 3 0 0"/>
+                                            <!-- The address answered with a key other than the pinned one: connection refused -->
+                                            <TextBlock Text="⚠ Anderer Schlüssel als bekannt – Verbindung blockiert"
+                                                       Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"
+                                                       Visibility="{Binding KeyRejected, Converter={StaticResource BoolToVis}}"/>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                             <Button Style="{StaticResource IconBtn}" Content="Ablehnen" Padding="10 7" Margin="0 0 6 0"
@@ -120,6 +124,10 @@
                                                        FontSize="11" FontStyle="Italic" Margin="0 2 0 0"/>
                                             <TextBlock Text="{Binding CodeText}" Foreground="{StaticResource AccentBrush}"
                                                        FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0 3 0 0"/>
+                                            <!-- The address answered with a key other than the pinned one: connection refused -->
+                                            <TextBlock Text="⚠ Anderer Schlüssel als bekannt – Verbindung blockiert"
+                                                       Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"
+                                                       Visibility="{Binding KeyRejected, Converter={StaticResource BoolToVis}}"/>
                                         </StackPanel>
                                         <Button Grid.Column="2" Style="{StaticResource IconBtn}" Content="Zurückziehen" Padding="10 7"
                                                 VerticalAlignment="Center"

@@ -83,12 +83,12 @@ namespace EncryptedMessenger.Tests
         public int TcpPort => Settings.TcpPort;
         public int UdpPort => Settings.UdpPort;
 
-        private ServiceHarness(bool discovery)
+        private ServiceHarness(bool discovery, int? tcpPort)
         {
             Directory.SetCurrentDirectory(Dir.Path);   // the service's .\data lives here
             Settings = new AppSettings
             {
-                TcpPort = Net.FreeTcpPort(),
+                TcpPort = tcpPort ?? Net.FreeTcpPort(),
                 UdpPort = Net.FreeUdpPort(),
                 Discovery = discovery,
                 DisplayName = "Bob"
@@ -99,9 +99,9 @@ namespace EncryptedMessenger.Tests
             Ui.MessageReceived += (_, m) => Events.Enqueue(m);
         }
 
-        public static async Task<ServiceHarness> StartAsync(bool discovery = false)
+        public static async Task<ServiceHarness> StartAsync(bool discovery = false, int? tcpPort = null)
         {
-            var h = new ServiceHarness(discovery);
+            var h = new ServiceHarness(discovery, tcpPort);
             await h.Service.StartAsync();
             _ = h.Ui.StartAsync();
             Assert.True(await Wait.Until(() => h.Ui.IsConnected), "UI pipe client did not connect");

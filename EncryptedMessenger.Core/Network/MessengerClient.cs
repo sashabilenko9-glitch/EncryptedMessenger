@@ -162,27 +162,6 @@ namespace EncryptedMessenger.Core.Network
             }
         }
 
-        public async Task DisconnectAsync()
-        {
-            if (_stream != null)
-            {
-                try
-                {
-                    await PacketHelper.SendAsync(_stream, new NetworkPacket
-                    {
-                        Type = PacketType.Disconnect,
-                        SenderId = _ownId,
-                        Timestamp = DateTime.UtcNow
-                    });
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Failed to send Disconnect packet (peer likely already gone)");
-                }
-            }
-            Dispose();
-        }
-
         private async Task ReceiveLoopAsync(CancellationToken ct)
         {
             try

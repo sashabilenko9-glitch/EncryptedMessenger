@@ -58,6 +58,14 @@ namespace EncryptedMessenger.WPF.ViewModels
             set => SetField(ref _isServiceConnected, value);
         }
 
+        private string? _listenerError;
+        /// <summary>Set when the service can't receive incoming connections (TCP port in use or blocked).</summary>
+        public string? ListenerError
+        {
+            get => _listenerError;
+            private set => SetField(ref _listenerError, value);
+        }
+
         public string OwnDisplayName => _settings.DisplayName;
         public string OwnFirstLetter =>
             string.IsNullOrEmpty(_settings.DisplayName) ? "?" : _settings.DisplayName[0].ToString().ToUpper();
@@ -150,6 +158,10 @@ namespace EncryptedMessenger.WPF.ViewModels
 
                     case PipeMessageType.NearbyList:
                         Nearby.Replace(msg.Deserialize<List<NearbyPeerPayload>>());
+                        break;
+
+                    case PipeMessageType.ListenerFailed:
+                        ListenerError = $"⚠ TCP-Port {msg.Deserialize<int>()} belegt – kein Empfang";
                         break;
 
                     case PipeMessageType.RequestList:

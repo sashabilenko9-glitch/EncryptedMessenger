@@ -24,7 +24,7 @@ namespace EncryptedMessenger.Tests
             string id, CryptoManager keys, PeerKeyVerifier? verify = null, Func<string, Task<bool>>? acceptsFrom = null)
         {
             var port = Net.FreeTcpPort();
-            var server = new MessengerServer(port, id, id, keys, verifyPeerKey: verify, acceptsMessagesFrom: acceptsFrom);
+            var server = new MessengerServer(port, id, keys, verifyPeerKey: verify, acceptsMessagesFrom: acceptsFrom);
             _servers.Add(server);
             _ = Task.Run(server.StartAsync);
             await Task.Delay(150);

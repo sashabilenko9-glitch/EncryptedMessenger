@@ -66,19 +66,6 @@ namespace EncryptedMessenger.Core.Database
                 return newestFirst;
             });
 
-        /// <summary>Returns the most recent message per conversation (for contact list previews).</summary>
-        public Task<Dictionary<string, Message>> GetLatestPerConversationAsync()
-            => db.RunAsync(d => d.Messages
-                                  .GroupBy(m => m.ConversationId)
-                                  .Select(g => g.OrderByDescending(m => m.Timestamp).First())
-                                  .ToDictionaryAsync(m => m.ConversationId));
-
-        public Task<int> CountUnreadAsync(string conversationId)
-            => db.RunAsync(d => d.Messages
-                                  .CountAsync(m => m.ConversationId == conversationId
-                                                && !m.IsOutgoing
-                                                && m.Status == MessageStatus.Delivered));
-
         // ── Helper (no DB access – stays synchronous and static) ──────────
 
         /// <summary>Builds the shared conversation ID from two participant IDs.</summary>

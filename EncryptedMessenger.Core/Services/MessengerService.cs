@@ -50,7 +50,7 @@ namespace EncryptedMessenger.Core.Services
             _contactRepo = new ContactRepository(_db);
 
             _server = new MessengerServer(
-                _settings.TcpPort, _settings.UserId, _settings.DisplayName, _crypto,
+                _settings.TcpPort, _settings.UserId, _crypto,
                 _loggerFactory.CreateLogger<MessengerServer>(), VerifyPeerKeyAsync, AcceptsMessagesFromAsync);
 
             _discovery = new PeerDiscovery(
@@ -71,11 +71,37 @@ namespace EncryptedMessenger.Core.Services
         public async Task StartAsync()
         {
             _db.EnsureCreated();
-            _ = Task.Run(_server.StartAsync);
+            _ = Task.Run(RunListenerAsync);
             if (_settings.Discovery) _ = Task.Run(_discovery.StartAsync);
             _ = Task.Run(_pipeServer.StartAsync);
             _ = Task.Run(() => PresenceSweepLoopAsync(_cts.Token));
         }
+
+        // Set when the TCP listener couldn't start (port taken by another app or another copy,
+        // or blocked). Without it the UI would say "online" while nobody can reach us.
+        private volatile bool _listenerFailed;
+
+        private async Task RunListenerAsync()
+        {
+            try
+            {
+                await _server.StartAsync();   // runs the accept loop; returns only when stopped
+            }
+            catch (Exception ex)
+            {
+                // MessengerServer already logged the details (e.g. AddressAlreadyInUse).
+                _logger.LogError(ex, "TCP listener on port {Port} is not running", _settings.TcpPort);
+                _listenerFailed = true;
+                // Probably nobody is listening on the pipe yet at startup; the UI is told
+                // again whenever it asks for its lists (see GetContacts).
+                await ReportListenerFailureAsync();
+            }
+        }
+
+        private Task ReportListenerFailureAsync()
+            => _listenerFailed
+               ? _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.ListenerFailed, _settings.TcpPort))
+               : Task.CompletedTask;
 
         // ── Presence ─────────────────────────────────────────────────────
 
@@ -137,6 +163,17 @@ namespace EncryptedMessenger.Core.Services
             {
                 return await GetOrCreateClientAsync(contact.Id, contact.IpAddress, contact.Port);
             }
+            catch (UntrustedPeerKeyException ex)
+            {
+                // The address answered with a key that isn't the one pinned for that peer. The
+                // connection is already refused; make it visible on the pending request, which
+                // may be listed under a manual "manual_ip_port" id rather than the peer's id.
+                _logger.LogWarning(ex, "Connect to {ContactId} refused: untrusted key", contact.Id);
+                if (ex.ContactId != contact.Id) _rejectedVia[contact.Id] = ex.ContactId;
+                await AnnounceRejectedKeyViaAsync(ex.ContactId, contact.Id);
+                await BroadcastRequestsAsync();
+                return null;
+            }
             catch (Exception ex)
             {
                 _logger.LogInformation(ex, "Background connect to {ContactId} failed", contact.Id);
@@ -144,6 +181,9 @@ namespace EncryptedMessenger.Core.Services
             }
             finally { _clientsLock.Release(); }
         }
+
+        /// <summary>Local contact id (e.g. manual_ip_port) → peer id whose key was refused when connecting through it.</summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rejectedVia = new();
 
         // ── Owed control packets (read receipts, contact requests) ───────
 
@@ -279,6 +319,11 @@ namespace EncryptedMessenger.Core.Services
             {
                 var client = await GetOrCreateClientAsync(recipientId, contact.IpAddress, contact.Port);
                 var id = client.ContactId is { Length: > 0 } realId ? realId : recipientId;
+                // A chat opened on an ALREADY open connection gets no new handshake, so it would
+                // never learn the fingerprint / verification code (and the "🔒" badge would stay
+                // hidden). Announce it on every explicit connect; for a new connection this just
+                // repeats what the handshake already sent.
+                await AnnounceTrustedKeyAsync(id, client.PeerPublicKeyXml);
                 // Always answer an explicit connect request (even without a presence change):
                 // the open chat shows "Verbinde…" until it gets a status for this contact.
                 var online = _presence.IsOnline(id);
@@ -386,6 +431,7 @@ namespace EncryptedMessenger.Core.Services
             await AnnounceTrustedKeyAsync(finalId, client.PeerPublicKeyXml);
 
             _clients[finalId] = client;
+            _rejectedVia.TryRemove(recipientId, out _);   // this address now answered with a trusted key
 
             lock (link)
             {
@@ -664,7 +710,8 @@ namespace EncryptedMessenger.Core.Services
             var requests = (await _contactRepo.GetRequestsAsync())
                 .Select(c => new ContactRequestPayload(c.Id, c.DisplayName, c.IpAddress,
                                                        Incoming: c.State == ContactState.IncomingRequest,
-                                                       VerificationCode: CodeFor(c.PublicKeyXml)))
+                                                       VerificationCode: CodeFor(c.PublicKeyXml),
+                                                       KeyRejected: _rejectedKeys.ContainsKey(c.Id) || _rejectedVia.ContainsKey(c.Id)))
                 .ToList();
             await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.RequestList, requests));
         }
@@ -874,6 +921,7 @@ namespace EncryptedMessenger.Core.Services
                 case PipeMessageType.GetNearby:
                     // Contacts, requests (for the badge) and nearby always travel together.
                     await BroadcastRelationshipsAsync();
+                    await ReportListenerFailureAsync();
                     break;
 
                 case PipeMessageType.AddNearbyPeer:
@@ -895,8 +943,9 @@ namespace EncryptedMessenger.Core.Services
 
                 case PipeMessageType.CancelContactRequest:
                     // Local only: if they accept later, their Accept is ignored (we're no longer OutgoingRequest).
-                    if (await _contactRepo.TransitionAsync(msg.Deserialize<ContactIdPayload>().ContactId,
-                                                           ContactState.OutgoingRequest, ContactState.Stranger))
+                    var cancelId = msg.Deserialize<ContactIdPayload>().ContactId;
+                    _rejectedVia.TryRemove(cancelId, out _);
+                    if (await _contactRepo.TransitionAsync(cancelId, ContactState.OutgoingRequest, ContactState.Stranger))
                         await BroadcastRelationshipsAsync();
                     break;
 

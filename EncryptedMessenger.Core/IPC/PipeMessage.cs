@@ -36,10 +36,7 @@ namespace EncryptedMessenger.Core.IPC
         MessageRead        = 108, // Payload = messageId (string)
         NearbyList         = 109, // Payload = List<NearbyPeerPayload>
         RequestList        = 110, // Payload = List<ContactRequestPayload>
-
-        // Bidirectional
-        Heartbeat        = 200,
-        Error            = 201
+        ListenerFailed     = 111, // Payload = TCP port (int): incoming connections can't be received
     }
 
     public class PipeMessage
@@ -77,8 +74,10 @@ namespace EncryptedMessenger.Core.IPC
     /// <summary>
     /// A pending contact request. <paramref name="Incoming"/>: they asked us (true) or we asked them (false).
     /// <paramref name="VerificationCode"/>: null until a handshake pinned their key (e.g. a request still waiting to be delivered).
+    /// <paramref name="KeyRejected"/>: the last connection attempt was answered with a key that differs from the pinned one.
     /// </summary>
-    public record ContactRequestPayload(string ContactId, string DisplayName, string IpAddress, bool Incoming, string? VerificationCode = null);
+    public record ContactRequestPayload(string ContactId, string DisplayName, string IpAddress, bool Incoming,
+                                        string? VerificationCode = null, bool KeyRejected = false);
 
     /// <summary>UI → service: the user compared <paramref name="VerificationCode"/> with the contact and it matched.</summary>
     public record MarkVerifiedPayload(string ContactId, string VerificationCode);

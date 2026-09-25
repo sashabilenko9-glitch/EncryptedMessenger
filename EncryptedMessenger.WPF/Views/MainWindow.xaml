@@ -97,6 +97,14 @@
                                 </TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
+                        <!-- Only when the service couldn't open its TCP port: we can send, but nobody can reach us -->
+                        <TextBlock Text="{Binding ListenerError}"
+                                   Foreground="{StaticResource DangerBrush}"
+                                   FontSize="11"
+                                   Margin="0 2 0 0"
+                                   TextWrapping="Wrap"
+                                   ToolTip="Ein anderes Programm oder eine zweite Instanz nutzt diesen Port. Port in den Einstellungen ändern und neu starten."
+                                   Visibility="{Binding ListenerError, Converter={StaticResource NullToVis}}"/>
                     </StackPanel>
 
                     <!-- Action buttons -->
@@ -330,7 +338,7 @@
         <!-- ╚══════════════════════════════════╝ -->
         <Grid Grid.Column="1" Background="{StaticResource BgMainBrush}">
 
-            <!-- LEER-ZUSTAND ────────────────────────────────────────── -->
+            <!-- EMPTY STATE ─────────────────────────────────────────── -->
             <StackPanel VerticalAlignment="Center"
                         HorizontalAlignment="Center"
                         Visibility="{Binding ActiveChat, Converter={StaticResource NullToInvVis}}">
@@ -390,8 +398,7 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- AKTIVER CHAT ─────────────────────────────────────────── -->
-            <!-- AKTIVER CHAT ─────────────────────────────────────────── -->
+            <!-- ACTIVE CHAT ─────────────────────────────────────────── -->
             <views:ChatView DataContext="{Binding ActiveChat}"
                             Visibility="{Binding DataContext.ActiveChat,
                                          RelativeSource={RelativeSource AncestorType=Window},

@@ -101,6 +101,9 @@ namespace EncryptedMessenger.WPF.ViewModels
         public string FirstLetter { get; } =
             string.IsNullOrEmpty(request.DisplayName) ? "?" : request.DisplayName[0].ToString().ToUpper();
 
+        /// <summary>The address answered with a different key than the one known for this peer; the connection was refused.</summary>
+        public bool KeyRejected { get; } = request.KeyRejected;
+
         /// <summary>Line under the name: the code to compare, or why there is none yet.</summary>
         public string CodeText { get; } = request.VerificationCode is { } code
             ? $"Sicherheitscode: {code}"

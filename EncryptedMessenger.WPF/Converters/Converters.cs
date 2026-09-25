@@ -27,15 +27,6 @@ namespace EncryptedMessenger.WPF.Converters
             => throw new NotImplementedException();
     }
 
-    // ── bool → text Brush (white for both in dark theme) ─────────────────
-    [ValueConversion(typeof(bool), typeof(Brush))]
-    public class BoolToTextColorConverter : IValueConverter
-    {
-        public object Convert(object v, Type t, object p, CultureInfo c) => Brushes.White;
-        public object ConvertBack(object v, Type t, object p, CultureInfo c)
-            => throw new NotImplementedException();
-    }
-
     // ── MessageStatus → status glyph string ───────────────────────────────
     [ValueConversion(typeof(MessageStatus), typeof(string))]
     public class MessageStatusConverter : IValueConverter

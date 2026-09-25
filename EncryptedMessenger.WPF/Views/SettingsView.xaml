@@ -29,7 +29,7 @@
                    FontWeight="SemiBold"
                    Foreground="{StaticResource TextPrimaryBrush}"/>
 
-        <!-- PROFIL -->
+        <!-- PROFILE -->
         <Border Grid.Row="2"
                 Background="{StaticResource BgHeaderBrush}"
                 CornerRadius="10"
@@ -49,7 +49,7 @@
             </StackPanel>
         </Border>
 
-        <!-- NETZWERK -->
+        <!-- NETWORK -->
         <Border Grid.Row="4"
                 Background="{StaticResource BgHeaderBrush}"
                 CornerRadius="10"
@@ -111,7 +111,7 @@
             </StackPanel>
         </Border>
 
-        <!-- SICHERHEIT (Info) -->
+        <!-- SECURITY (info) -->
         <Border Grid.Row="6"
                 Background="{StaticResource BgHeaderBrush}"
                 CornerRadius="10"

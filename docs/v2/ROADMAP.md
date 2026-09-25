@@ -2,6 +2,16 @@
 
 ## Progress log
 
+- **2026-09-25 — Quick fixes from the post-v2.0.0 review.**
+  - **Discovery no longer renames contacts.** An announced name only replaces a placeholder name, so a name typed when adding by IP (or sent with a request) is kept. It also removes a spoofing vector: unauthenticated UDP can no longer rename a known contact.
+  - **A TCP port that can't be opened is shown in the UI** ("⚠ TCP-Port … belegt – kein Empfang" under the profile). It used to be only logged while the UI said "online". New pipe message `ListenerFailed`, re-sent whenever the UI asks for its lists because the failure usually happens before the UI connects.
+  - **Contact request answered with a different key:** the pending request card says so (`ContactRequestPayload.KeyRejected`). It used to wait silently in "Gesendet" although the connection had been refused.
+  - **"🔒 Verschlüsselt" only after a trusted handshake.** Fixed a hidden bug along the way: opening a chat on an *already open* connection never got the fingerprint/verification code, because no new handshake happened. `ConnectToContactAsync` now always announces the trusted key.
+  - Stale comments fixed: little-endian framing, 32-byte session key, service restart behaviour, WindowsService csproj.
+  - Russian/German code comments in XAML translated to English; the chat grid row ③ was mislabelled "loading" (it's the sending indicator).
+  - Dead code removed: `Worker.cs` template, `PacketType.Identity` (value 6 kept reserved), pipe `Heartbeat`/`Error`, `RsaCryptoService.Sign/Verify`, `GetLatestPerConversationAsync`, `CountUnreadAsync`, `MessengerClient.DisconnectAsync`, `ContactRepository.UpsertAsync`, `BoolToTextColorConverter`, the unused display-name parameter of `MessengerServer`, and the `EntityFrameworkCore.Design` package.
+  - Tests: 45 → 49 (discovery naming, port in use reported, key-rejected request, key/code on reopen). 3 green runs; removing the new announce line makes the reopen test fail.
+
 - **2026-09-25 — P1.7 done: regression test suite (xUnit, 45 tests, ~15 s).** New `EncryptedMessenger.Tests` project (in the solution; `dotnet test EncryptedMessenger.Tests`), consolidating the ad-hoc verification harnesses used for every change so far. Coverage:
   - **Crypto:** AES-GCM round trip and tamper detection, storage encryption with fresh nonces, session-key exchange, DPAPI-protected key file, undecryptable key left untouched, legacy plaintext migration.
   - **Verification code:** symmetry, format, differing codes under MITM, and the fixed-20-digit property.

@@ -20,7 +20,6 @@ namespace EncryptedMessenger.Core.Network
 
         private readonly int _port;
         private readonly string _ownId;
-        private readonly string _ownDisplayName;
         private readonly CryptoManager _crypto;
         private readonly ILogger _logger;
 
@@ -46,12 +45,11 @@ namespace EncryptedMessenger.Core.Network
         /// Asked for every incoming Message: is this peer an accepted contact? Null = accept all
         /// (tests/tools only).
         /// </param>
-        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null,
+        public MessengerServer(int port, string ownId, CryptoManager crypto, ILogger? logger = null,
                                PeerKeyVerifier? verifyPeerKey = null, Func<string, Task<bool>>? acceptsMessagesFrom = null)
         {
             _port = port;
             _ownId = ownId;
-            _ownDisplayName = ownDisplayName;
             _crypto = crypto;
             _logger = logger ?? NullLogger.Instance;
             _verifyPeerKey = verifyPeerKey;
