@@ -35,6 +35,15 @@ namespace EncryptedMessenger.Core.Database
 
         // ── Read ──────────────────────────────────────────────────────────
 
+        /// <summary>Incoming messages from <paramref name="senderId"/> whose read receipt is still unsent, oldest first.</summary>
+        public Task<List<Message>> GetPendingReadAcksAsync(string senderId)
+            => db.RunAsync(d => d.Messages
+                                  .Where(m => !m.IsOutgoing
+                                           && m.SenderId == senderId
+                                           && m.Status == MessageStatus.ReadAckPending)
+                                  .OrderBy(m => m.Timestamp)
+                                  .ToListAsync());
+
         public Task<Message?> GetByMessageIdAsync(string messageId)
             => db.RunAsync(d => d.Messages.FirstOrDefaultAsync(m => m.MessageId == messageId));
 
@@ -68,7 +77,7 @@ namespace EncryptedMessenger.Core.Database
             => db.RunAsync(d => d.Messages
                                   .CountAsync(m => m.ConversationId == conversationId
                                                 && !m.IsOutgoing
-                                                && m.Status != MessageStatus.Read));
+                                                && m.Status == MessageStatus.Delivered));
 
         // ── Helper (no DB access – stays synchronous and static) ──────────
 

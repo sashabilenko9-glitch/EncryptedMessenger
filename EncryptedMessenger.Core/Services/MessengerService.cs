@@ -103,6 +103,60 @@ namespace EncryptedMessenger.Core.Services
             await _pipeServer.BroadcastAsync(PipeMessage.Create(
                 online ? PipeMessageType.ContactOnline : PipeMessageType.ContactOffline,
                 new ContactStatusPayload(contactId, online)));
+
+            // Retry trigger: contact came (back) online. Not awaited: PublishPresenceAsync is
+            // also called while _clientsLock is held (GetOrCreateClientAsync), and the flush
+            // may need that lock — awaiting it here would deadlock.
+            if (online) RunHandler(nameof(FlushPendingReadAcksAsync), () => FlushPendingReadAcksAsync(contactId));
+        }
+
+        // ── Read receipts ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Delivers a ReadAck over whichever connection to <paramref name="contactId"/> exists:
+        /// the inbound one they opened to us, or our outbound one to them. Never opens a new
+        /// connection just for a receipt.
+        /// </summary>
+        private async Task<bool> TrySendReadAckAsync(string contactId, string messageId)
+        {
+            if (await _server.SendReadAckAsync(contactId, messageId)) return true;
+
+            await _clientsLock.WaitAsync();
+            try
+            {
+                return _clients.TryGetValue(contactId, out var client)
+                       && await client.SendReadAckAsync(messageId);
+            }
+            finally { _clientsLock.Release(); }
+        }
+
+        // Contacts whose pending receipts are being sent right now. Several triggers
+        // (inbound connect, outbound connect, going online) often fire together; this
+        // keeps them from sending the same receipts in parallel.
+        private readonly HashSet<string> _flushingReadAcks = [];
+
+        /// <summary>
+        /// Sends every read receipt still owed to <paramref name="contactId"/>, oldest first,
+        /// marking each Read once it went out. Stops at the first failure — the rest stay
+        /// ReadAckPending (in the database, so they survive a restart) for the next attempt.
+        /// </summary>
+        private async Task FlushPendingReadAcksAsync(string contactId)
+        {
+            lock (_flushingReadAcks)
+                if (!_flushingReadAcks.Add(contactId)) return;
+
+            try
+            {
+                foreach (var m in await _msgRepo.GetPendingReadAcksAsync(contactId))
+                {
+                    if (!await TrySendReadAckAsync(contactId, m.MessageId)) break;
+                    await _msgRepo.UpdateStatusAsync(m.MessageId, MessageStatus.Read);
+                }
+            }
+            finally
+            {
+                lock (_flushingReadAcks) _flushingReadAcks.Remove(contactId);
+            }
         }
 
         /// <summary>
@@ -288,6 +342,12 @@ namespace EncryptedMessenger.Core.Services
                 }
             }
             await PublishPresenceAsync(finalId);
+
+            // Retry trigger: we connected to them. Deliberately NOT awaited: we still hold
+            // _clientsLock here and the flush needs it for the outbound channel — awaiting
+            // would deadlock (SemaphoreSlim isn't re-entrant). RunHandler lets it run once
+            // our caller releases the lock.
+            RunHandler(nameof(FlushPendingReadAcksAsync), () => FlushPendingReadAcksAsync(finalId));
             return client;
         }
 
@@ -412,6 +472,9 @@ namespace EncryptedMessenger.Core.Services
 
             if (listChanged) await BroadcastContactListAsync();
             await PublishPresenceAsync(e.ContactId);
+
+            // Retry trigger: they connected to us — a channel for owed receipts now exists.
+            await FlushPendingReadAcksAsync(e.ContactId);
         }
 
         private async Task HandleDeliveryAcknowledgedAsync(DeliveryAckEventArgs e)
@@ -476,14 +539,14 @@ namespace EncryptedMessenger.Core.Services
                 case PipeMessageType.MarkRead:
                     var mark = msg.Deserialize<MarkReadPayload>();
                     var readMsg = await _msgRepo.GetByMessageIdAsync(mark.MessageId);
-                    if (readMsg == null || readMsg.IsOutgoing || readMsg.Status == MessageStatus.Read)
+                    if (readMsg == null || readMsg.IsOutgoing || readMsg.Status != MessageStatus.Delivered)
                         break;
 
-                    await _msgRepo.UpdateStatusAsync(mark.MessageId, MessageStatus.Read);
-                    // Tell the sender. The message arrived over their outbound connection,
-                    // i.e. our inbound stream from them; if that is gone the receipt is
-                    // only recorded locally (no retry queue yet).
-                    await _server.SendReadAckAsync(readMsg.SenderId, mark.MessageId);
+                    // Record "read, receipt owed" first, THEN try to send. If sending fails (or
+                    // the process dies in between) the receipt is still in the database and
+                    // FlushPendingReadAcksAsync delivers it on the next connection.
+                    await _msgRepo.UpdateStatusAsync(mark.MessageId, MessageStatus.ReadAckPending);
+                    await FlushPendingReadAcksAsync(readMsg.SenderId);
                     break;
 
                 case PipeMessageType.Connect:

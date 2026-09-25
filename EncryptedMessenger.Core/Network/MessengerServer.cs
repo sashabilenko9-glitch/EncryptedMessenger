@@ -216,11 +216,16 @@ namespace EncryptedMessenger.Core.Network
 
         // ── Outbound read-receipt ─────────────────────────────────────────
 
-        public async Task SendReadAckAsync(string contactId, string messageId)
+        /// <summary>
+        /// Sends a ReadAck over the inbound connection from <paramref name="contactId"/>.
+        /// Returns false if there is no such connection or the write failed — the caller
+        /// keeps the receipt pending and retries later.
+        /// </summary>
+        public async Task<bool> SendReadAckAsync(string contactId, string messageId)
         {
             NetworkStream? stream;
             lock (_streamsLock) _activeStreams.TryGetValue(contactId, out stream);
-            if (stream == null) return;
+            if (stream == null) return false;
 
             try
             {
@@ -231,10 +236,12 @@ namespace EncryptedMessenger.Core.Network
                     MessageId = messageId,
                     Timestamp = DateTime.UtcNow
                 });
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Read-ack send failed for {ContactId}", Short(contactId));
+                return false;
             }
         }
 

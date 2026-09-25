@@ -39,12 +39,26 @@ namespace EncryptedMessenger.Core.Models
         public string? DecryptedContent { get; set; }
     }
 
+    /// <summary>
+    /// Outgoing: Pending → Sent → Delivered → Read (or Failed).
+    /// Incoming: Delivered → ReadAckPending → Read.
+    ///
+    /// Stored as an int (see AppDbContext), so adding a value needs no schema change —
+    /// important because the DB is created with EnsureCreated(), which never alters
+    /// existing tables.
+    /// </summary>
     public enum MessageStatus
     {
         Pending   = 0,
         Sent      = 1,
         Delivered = 2,
         Read      = 3,
-        Failed    = 4
+        Failed    = 4,
+
+        /// <summary>
+        /// Incoming only: read by our user, but the ReadAck hasn't reached the sender yet
+        /// (no connection at that moment). Retried whenever a connection to them appears.
+        /// </summary>
+        ReadAckPending = 5
     }
 }

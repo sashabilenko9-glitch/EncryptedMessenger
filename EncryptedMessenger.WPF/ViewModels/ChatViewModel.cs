@@ -294,7 +294,9 @@ namespace EncryptedMessenger.WPF.ViewModels
 
             // Messages that arrived while this chat was closed are read now that it is open.
             var convId = MessageRepository.ConversationId(_ownId, _contact.Id);
-            foreach (var m in messages.Where(m => !m.IsOutgoing && m.Status != MessageStatus.Read))
+            // Incoming + Delivered = not read yet. (ReadAckPending/Read are already read;
+            // the service retries owed receipts on its own.)
+            foreach (var m in messages.Where(m => !m.IsOutgoing && m.Status == MessageStatus.Delivered))
                 _ = _pipe.SendAsync(PipeMessage.Create(PipeMessageType.MarkRead,
                     new MarkReadPayload(convId, m.MessageId)));
         }

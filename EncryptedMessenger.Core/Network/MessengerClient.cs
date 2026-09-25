@@ -115,6 +115,35 @@ namespace EncryptedMessenger.Core.Network
             _logger.LogInformation("Message sent id={MessageId}", messageId);
         }
 
+        /// <summary>
+        /// Sends a ReadAck over this outbound connection (the peer's MessengerServer
+        /// handles it like one arriving on the connection it opened). Returns false if
+        /// not connected or the write failed.
+        /// Callers must not write concurrently with <see cref="SendMessageAsync"/>;
+        /// MessengerService does both only while holding its clients lock.
+        /// </summary>
+        public async Task<bool> SendReadAckAsync(string messageId)
+        {
+            if (_stream == null || !IsConnected) return false;
+            try
+            {
+                await PacketHelper.SendAsync(_stream, new NetworkPacket
+                {
+                    Type = PacketType.ReadAck,
+                    SenderId = _ownId,
+                    RecipientId = ContactId,
+                    MessageId = messageId,
+                    Timestamp = DateTime.UtcNow
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Read-ack send failed for {ContactId}", ContactId);
+                return false;
+            }
+        }
+
         public async Task DisconnectAsync()
         {
             if (_stream != null)
