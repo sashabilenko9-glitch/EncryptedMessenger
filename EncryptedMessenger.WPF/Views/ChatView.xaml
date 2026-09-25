@@ -6,6 +6,8 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="62"/>
             <!-- ① Chat-Header       -->
+            <RowDefinition Height="Auto"/>
+            <!-- ①b Key-change banner (only while KeyChanged) -->
             <RowDefinition Height="*"/>
             <!-- ② Nachrichten-Liste -->
             <RowDefinition Height="Auto"/>
@@ -68,7 +70,7 @@
                                 Margin="6 0 0 0"
                                 VerticalAlignment="Center"
                                 Visibility="{Binding KeyChanged, Converter={StaticResource BoolToVis}}"
-                                ToolTip="{Binding Fingerprint, StringFormat='Neuer Fingerabdruck: {0} — mit dem Kontakt vergleichen!'}">
+                                ToolTip="{Binding PendingFingerprint, StringFormat='Neuer Fingerabdruck: {0} — mit dem Kontakt vergleichen!'}">
                             <TextBlock Text="⚠ Schlüssel geändert"
                                        Foreground="#FF8080"
                                        FontSize="10"/>
@@ -111,8 +113,49 @@
             </Grid>
         </Border>
 
+        <!-- ═══════════ ①b KEY-CHANGE BANNER ═══════════ -->
+        <!-- Shown while the peer presents a key other than the pinned one. The connection is
+             refused and sending is disabled until the user compares the fingerprint and accepts. -->
+        <Border Grid.Row="1"
+                Background="#3A1818"
+                BorderBrush="{StaticResource DangerBrush}"
+                BorderThickness="0 0 0 1"
+                Padding="16 10"
+                Visibility="{Binding KeyChanged, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0 0 12 0">
+                    <TextBlock Text="⚠ Schlüssel geändert – Verbindung blockiert"
+                               Foreground="#FF8080"
+                               FontWeight="SemiBold"
+                               FontSize="13"/>
+                    <TextBlock Text="Neu installiert oder Angriff? Vergleichen Sie diesen Fingerabdruck über Telefon oder persönlich:"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="0 3 0 4"/>
+                    <!-- Read-only TextBox instead of TextBlock so the fingerprint can be selected/copied -->
+                    <TextBox Text="{Binding PendingFingerprint, Mode=OneWay}"
+                             IsReadOnly="True"
+                             Style="{StaticResource PlainTextBox}"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button Grid.Column="1"
+                        Style="{StaticResource DangerBtn}"
+                        Content="Neuen Schlüssel akzeptieren"
+                        Command="{Binding AcceptKeyCommand}"
+                        Padding="14 8"
+                        VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
         <!-- ═══════════ ② NACHRICHTEN-LISTE ═══════════ -->
-        <ScrollViewer Grid.Row="1"
+        <ScrollViewer Grid.Row="2"
                       x:Name="MessageScroll"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
@@ -145,7 +188,7 @@
         </ScrollViewer>
 
         <!-- ═══════════ ③ SENDE-INDIKATOR ═══════════ -->
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Background="{StaticResource BgMainBrush}"
                 Padding="22 4 0 0"
                 Visibility="{Binding IsSending, Converter={StaticResource BoolToVis}}">
@@ -156,7 +199,7 @@
         </Border>
 
         <!-- ═══════════ ④ EINGABEZEILE ═══════════ -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="4"
                 Background="{StaticResource BgHeaderBrush}"
                 BorderBrush="{StaticResource BorderLightBrush}"
                 BorderThickness="0 1 0 0"

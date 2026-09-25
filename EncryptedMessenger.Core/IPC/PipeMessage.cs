@@ -16,6 +16,7 @@ namespace EncryptedMessenger.Core.IPC
         MarkRead         = 5,
         Connect          = 6,
         ContactIdChanged = 7,
+        AcceptPeerKey    = 8,
 
         // Service → UI
         NewIncomingMessage = 100,
@@ -67,11 +68,26 @@ namespace EncryptedMessenger.Core.IPC
     public record MessageHistoryPayload(string ConversationId, List<Models.Message> Messages);
 
     /// <summary>
-    /// Sent to the UI right after a handshake completes. <paramref name="Changed"/> is true
-    /// when this contact previously had a different key on file — a signal to the user that
-    /// this may not be the same peer as last time (reinstall, or a possible MITM).
+    /// Sent to the UI after a handshake. <paramref name="Changed"/> = false: the key is the
+    /// pinned one (or was just pinned on first contact) and the connection is up.
+    /// <paramref name="Changed"/> = true: the peer presented a DIFFERENT key than the pinned
+    /// one — the connection was refused, and <paramref name="Fingerprint"/> is the fingerprint
+    /// of that new key, for the user to compare out-of-band before sending
+    /// <see cref="AcceptPeerKeyPayload"/> (legit reinstall) or ignoring it (possible MITM).
+    /// <paramref name="ViaContactId"/>: set when the refused connection was opened for a
+    /// different local contact id (a manual "manual_ip_port" contact), so the UI can show
+    /// the warning in that chat even though the peer identified itself as ContactId.
     /// </summary>
-    public record KeyFingerprintPayload(string ContactId, string Fingerprint, bool Changed);
+    public record KeyFingerprintPayload(string ContactId, string Fingerprint, bool Changed, string? ViaContactId = null);
+
+    /// <summary>
+    /// UI → service: the user compared <paramref name="Fingerprint"/> with the contact and
+    /// trusts it. The service re-pins only if the key it is holding for this contact still
+    /// has exactly this fingerprint — so a different key that shows up between display and
+    /// click can't be accepted by accident. Afterwards it reconnects to
+    /// <paramref name="ReconnectContactId"/> (the chat's contact id), or ContactId if null.
+    /// </summary>
+    public record AcceptPeerKeyPayload(string ContactId, string Fingerprint, string? ReconnectContactId = null);
 
 
 

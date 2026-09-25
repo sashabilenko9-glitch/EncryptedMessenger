@@ -50,7 +50,7 @@ namespace EncryptedMessenger.Core.Services
 
             _server = new MessengerServer(
                 _settings.TcpPort, _settings.UserId, _settings.DisplayName, _crypto,
-                _loggerFactory.CreateLogger<MessengerServer>());
+                _loggerFactory.CreateLogger<MessengerServer>(), VerifyPeerKeyAsync);
 
             _discovery = new PeerDiscovery(
                 _settings.UdpPort, _settings.UserId, _settings.DisplayName, _settings.TcpPort,
@@ -215,6 +215,8 @@ namespace EncryptedMessenger.Core.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "SendMessage failed for recipient {RecipientId}", recipientId);
+                if (ex is UntrustedPeerKeyException untrusted)
+                    await AnnounceRejectedKeyViaAsync(untrusted.ContactId, recipientId);
                 return null;
             }
             finally { _clientsLock.Release(); }
@@ -242,6 +244,8 @@ namespace EncryptedMessenger.Core.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Connect failed for contact {RecipientId}", recipientId);
+                if (ex is UntrustedPeerKeyException untrusted)
+                    await AnnounceRejectedKeyViaAsync(untrusted.ContactId, recipientId);
                 _presence.SetReported(recipientId, false);
                 await _pipeServer.BroadcastAsync(PipeMessage.Create(
                     PipeMessageType.ContactOffline, new ContactStatusPayload(recipientId, false)));
@@ -260,7 +264,7 @@ namespace EncryptedMessenger.Core.Services
             if (_clients.TryGetValue(recipientId, out var existing) && existing.IsConnected)
                 return existing;
 
-            var client = new MessengerClient(_settings.UserId, _crypto, _loggerFactory.CreateLogger<MessengerClient>());
+            var client = new MessengerClient(_settings.UserId, _crypto, _loggerFactory.CreateLogger<MessengerClient>(), VerifyPeerKeyAsync);
 
             // Which contact this connection counts towards in the presence tracker. Set only
             // once the handshake is done (and, for a manual contact, merged to the real id).
@@ -329,7 +333,7 @@ namespace EncryptedMessenger.Core.Services
                 await BroadcastContactListAsync();
             }
 
-            await VerifyAndStorePeerKeyAsync(finalId, client.PeerPublicKeyXml);
+            await AnnounceTrustedKeyAsync(finalId, client.PeerPublicKeyXml);
 
             _clients[finalId] = client;
 
@@ -351,35 +355,94 @@ namespace EncryptedMessenger.Core.Services
             return client;
         }
 
+        // ── Key pinning ──────────────────────────────────────────────────
+
         /// <summary>
-        /// Persists the peer's public key for this contact, computes its fingerprint,
-        /// and warns (log + UI notification) if it differs from a previously known key
-        /// for the same contact — likely a reinstall on their side, or a man-in-the-middle
-        /// substituting a different key during the handshake.
+        /// Keys presented by peers that did NOT match the pinned key, per contact — held
+        /// until the user accepts one (AcceptPeerKey) after comparing its fingerprint.
+        /// In memory only: after a restart the next attempt by the peer re-populates it.
         /// </summary>
-        private async Task VerifyAndStorePeerKeyAsync(string contactId, string publicKeyXml)
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rejectedKeys = new();
+
+        /// <summary>
+        /// <see cref="PeerKeyVerifier"/> handed to the TCP server and clients; runs inside
+        /// every handshake before a session key is exchanged.
+        /// First contact: pins the key (trust on first use). Known contact: the key must be
+        /// identical to the pinned one, otherwise the handshake is aborted and the UI is told
+        /// the new key's fingerprint so the user can decide.
+        /// </summary>
+        private async Task<bool> VerifyPeerKeyAsync(string contactId, string publicKeyXml)
         {
-            if (string.IsNullOrEmpty(publicKeyXml)) return;
-
-            var contact = await _contactRepo.GetByIdAsync(contactId);
-            var previousKey = contact?.PublicKeyXml;
-            var changed = !string.IsNullOrEmpty(previousKey) && previousKey != publicKeyXml;
-            var fingerprint = RsaCryptoService.ComputeFingerprint(publicKeyXml);
-
-            if (changed)
+            try
             {
+                if (string.IsNullOrEmpty(publicKeyXml)) return false;
+                if (await _contactRepo.PinOrVerifyKeyAsync(contactId, publicKeyXml)) return true;
+
+                _rejectedKeys[contactId] = publicKeyXml;
+                var fingerprint = RsaCryptoService.ComputeFingerprint(publicKeyXml);
                 _logger.LogWarning(
-                    "SECURITY: public key for contact {ContactId} changed since last time " +
-                    "(possible reinstall, or a man-in-the-middle). New fingerprint: {Fingerprint}",
+                    "SECURITY: contact {ContactId} presented a different public key than the pinned one " +
+                    "(reinstall, or a man-in-the-middle). Connection refused. New fingerprint: {Fingerprint}",
                     contactId, fingerprint);
+
+                await _pipeServer.BroadcastAsync(PipeMessage.Create(
+                    PipeMessageType.KeyFingerprint,
+                    new KeyFingerprintPayload(contactId, fingerprint, Changed: true)));
+                return false;
             }
+            catch (Exception ex)
+            {
+                // Fail closed: if we can't check the key (DB error…), we don't trust it.
+                _logger.LogError(ex, "Key verification failed for {ContactId}; refusing connection", contactId);
+                return false;
+            }
+        }
 
-            if (contact != null)
-                await _contactRepo.SetPublicKeyXmlAsync(contactId, publicKeyXml);
-
+        /// <summary>
+        /// A connection opened for local contact <paramref name="viaContactId"/> (e.g. a manual
+        /// "manual_ip_port" contact) was answered by <paramref name="peerId"/> with an untrusted
+        /// key. VerifyPeerKeyAsync already warned under peerId; repeat it tagged with the chat's
+        /// id, otherwise the UI — which only knows the manual id — would never show it.
+        /// </summary>
+        private async Task AnnounceRejectedKeyViaAsync(string peerId, string viaContactId)
+        {
+            if (peerId == viaContactId || !_rejectedKeys.TryGetValue(peerId, out var key)) return;
             await _pipeServer.BroadcastAsync(PipeMessage.Create(
                 PipeMessageType.KeyFingerprint,
-                new KeyFingerprintPayload(contactId, fingerprint, changed)));
+                new KeyFingerprintPayload(peerId, RsaCryptoService.ComputeFingerprint(key), Changed: true, ViaContactId: viaContactId)));
+        }
+
+        /// <summary>Tells the UI the (pinned, verified) fingerprint of a contact after a successful handshake.</summary>
+        private async Task AnnounceTrustedKeyAsync(string contactId, string publicKeyXml)
+        {
+            if (string.IsNullOrEmpty(publicKeyXml)) return;
+            _rejectedKeys.TryRemove(contactId, out _);   // the real key just worked; drop any stale candidate
+            await _pipeServer.BroadcastAsync(PipeMessage.Create(
+                PipeMessageType.KeyFingerprint,
+                new KeyFingerprintPayload(contactId, RsaCryptoService.ComputeFingerprint(publicKeyXml), Changed: false)));
+        }
+
+        /// <summary>
+        /// The user compared <paramref name="fingerprint"/> with the contact out-of-band and
+        /// trusts it: re-pin to the rejected key — but only if that key still has exactly this
+        /// fingerprint — then reconnect.
+        /// </summary>
+        private async Task AcceptPeerKeyAsync(string contactId, string fingerprint, string? reconnectContactId)
+        {
+            if (!_rejectedKeys.TryGetValue(contactId, out var candidate)
+                || RsaCryptoService.ComputeFingerprint(candidate) != fingerprint)
+            {
+                _logger.LogWarning("AcceptPeerKey for {ContactId} ignored: no pending key with fingerprint {Fingerprint}",
+                    contactId, fingerprint);
+                return;
+            }
+
+            await _contactRepo.SetPublicKeyXmlAsync(contactId, candidate);
+            _rejectedKeys.TryRemove(contactId, out _);
+            _logger.LogWarning("SECURITY: user accepted new public key for {ContactId}, fingerprint {Fingerprint}",
+                contactId, fingerprint);
+
+            await ConnectToContactAsync(reconnectContactId ?? contactId);
         }
 
         // ── Event handlers ────────────────────────────────────────────────
@@ -432,7 +495,7 @@ namespace EncryptedMessenger.Core.Services
                 await _contactRepo.UpsertAsync(new Contact
                 {
                     Id = e.SenderId,
-                    DisplayName = e.SenderId[..Math.Min(8, e.SenderId.Length)],
+                    DisplayName = Contact.PlaceholderName(e.SenderId),
                     LastSeen = DateTime.UtcNow
                 });
                 await BroadcastContactListAsync();
@@ -468,7 +531,7 @@ namespace EncryptedMessenger.Core.Services
 
             await _contactRepo.UpdateLastSeenAsync(e.ContactId);
             if (e.PublicKeyXml != null)
-                await VerifyAndStorePeerKeyAsync(e.ContactId, e.PublicKeyXml);
+                await AnnounceTrustedKeyAsync(e.ContactId, e.PublicKeyXml);
 
             if (listChanged) await BroadcastContactListAsync();
             await PublishPresenceAsync(e.ContactId);
@@ -552,6 +615,11 @@ namespace EncryptedMessenger.Core.Services
                 case PipeMessageType.Connect:
                     var conn = msg.Deserialize<ConnectPayload>();
                     await ConnectToContactAsync(conn.ContactId);
+                    break;
+
+                case PipeMessageType.AcceptPeerKey:
+                    var accept = msg.Deserialize<AcceptPeerKeyPayload>();
+                    await AcceptPeerKeyAsync(accept.ContactId, accept.Fingerprint, accept.ReconnectContactId);
                     break;
 
                 case PipeMessageType.AddContact:

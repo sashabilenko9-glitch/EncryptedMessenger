@@ -28,11 +28,18 @@ namespace EncryptedMessenger.Core.Network
         public string PeerPublicKeyXml { get; private set; } = string.Empty;
         public bool IsConnected => _tcp?.Connected ?? false;
 
-        public MessengerClient(string ownId, CryptoManager crypto, ILogger? logger = null)
+        private readonly PeerKeyVerifier? _verifyPeerKey;
+
+        /// <param name="verifyPeerKey">
+        /// Consulted after the peer's KeyExchange and before our session key is sent.
+        /// Null = accept any key (used only by tests/tools that have no contact store).
+        /// </param>
+        public MessengerClient(string ownId, CryptoManager crypto, ILogger? logger = null, PeerKeyVerifier? verifyPeerKey = null)
         {
             _ownId = ownId;
             _crypto = crypto;
             _logger = logger ?? NullLogger.Instance;
+            _verifyPeerKey = verifyPeerKey;
         }
 
         public async Task ConnectAsync(string ip, int port, CancellationToken ct = default)
@@ -73,6 +80,14 @@ namespace EncryptedMessenger.Core.Network
             var peerPublicKey = kePkt.Payload;
             PeerPublicKeyXml = peerPublicKey;
             _logger.LogDebug("Got peer key, contactId={ContactId}", ContactId);
+
+            // 1b. Key pinning: is this the key we know for this contact? Checked BEFORE
+            // step 3 — otherwise we'd already have handed a session key to whoever this is.
+            if (_verifyPeerKey != null && !await _verifyPeerKey(ContactId, peerPublicKey))
+            {
+                _logger.LogWarning("Aborting handshake: untrusted key for {ContactId}", ContactId);
+                throw new UntrustedPeerKeyException(ContactId);
+            }
 
             // 2. Send own public key
             await PacketHelper.SendAsync(_stream, new NetworkPacket

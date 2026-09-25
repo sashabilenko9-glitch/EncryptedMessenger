@@ -158,8 +158,9 @@ namespace EncryptedMessenger.WPF.ViewModels
 
                     case PipeMessageType.KeyFingerprint:
                         var fp = msg.Deserialize<KeyFingerprintPayload>();
-                        if (ActiveChat?.ContactId == fp.ContactId)
-                            ActiveChat.SetKeyFingerprint(fp.Fingerprint, fp.Changed);
+                        if (ActiveChat != null
+                            && (ActiveChat.ContactId == fp.ContactId || ActiveChat.ContactId == fp.ViaContactId))
+                            ActiveChat.SetKeyFingerprint(fp.ContactId, fp.Fingerprint, fp.Changed);
                         break;
                 }
             });

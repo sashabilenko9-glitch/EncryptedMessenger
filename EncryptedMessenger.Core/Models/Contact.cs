@@ -27,6 +27,9 @@ namespace EncryptedMessenger.Core.Models
 
         public DateTime LastSeen { get; set; } = DateTime.MinValue;
 
+        /// <summary>Name used for a contact we only know by id (first 8 chars), until discovery or the user provides a real one.</summary>
+        public static string PlaceholderName(string id) => id[..Math.Min(8, id.Length)];
+
         // ── Runtime-only ─────────────────────────────────────────────────
         [NotMapped] public bool IsOnline    { get; set; }
         [NotMapped] public int  UnreadCount { get; set; }

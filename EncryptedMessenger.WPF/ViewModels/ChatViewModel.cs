@@ -62,12 +62,28 @@ namespace EncryptedMessenger.WPF.ViewModels
         }
 
         private bool _keyChanged;
-        /// <summary>True when this handshake's key differs from a previously known key for this contact — possible reinstall or MITM.</summary>
+        /// <summary>
+        /// True while the peer presents a key that differs from the pinned one: the service
+        /// refused the connection (reinstall or MITM). Sending is blocked until the user
+        /// accepts the new key or the peer shows up again with the pinned one.
+        /// </summary>
         public bool KeyChanged
         {
             get => _keyChanged;
             private set => SetField(ref _keyChanged, value);
         }
+
+        private string _pendingFingerprint = string.Empty;
+        /// <summary>Fingerprint of the refused NEW key — what the user must compare with the contact before accepting.</summary>
+        public string PendingFingerprint
+        {
+            get => _pendingFingerprint;
+            private set => SetField(ref _pendingFingerprint, value);
+        }
+
+        // Peer id the refused key belongs to. Usually ContactId; differs when this chat is a
+        // manual contact whose address was answered by a peer with a different real id.
+        private string _pendingKeyContactId = string.Empty;
 
         // ── Messages ──────────────────────────────────────────────────────
         public ObservableCollection<MessageViewModel> Messages { get; } = [];
@@ -103,6 +119,7 @@ namespace EncryptedMessenger.WPF.ViewModels
 
         // ── Commands ──────────────────────────────────────────────────────
         public AsyncRelayCommand SendCommand { get; }
+        public AsyncRelayCommand AcceptKeyCommand { get; }
         public RelayCommand InsertEmojiCommand { get; }
 
         /// <summary>Small set of emoji for the quick-insert panel.</summary>
@@ -123,7 +140,9 @@ namespace EncryptedMessenger.WPF.ViewModels
 
             SendCommand = new AsyncRelayCommand(
                 _ => SendMessageAsync(),
-                _ => !IsDraftEmpty && !IsSending);
+                _ => !IsDraftEmpty && !IsSending && !KeyChanged);
+
+            AcceptKeyCommand = new AsyncRelayCommand(_ => AcceptNewKeyAsync(), _ => KeyChanged);
 
             InsertEmojiCommand = new RelayCommand(e =>
             {
@@ -158,12 +177,54 @@ namespace EncryptedMessenger.WPF.ViewModels
         }
 
         /// <summary>Called by MainViewModel when the service reports the peer's key fingerprint after a handshake.</summary>
-        public void SetKeyFingerprint(string fingerprint, bool changed)
+        /// <param name="peerId">Id the fingerprint belongs to (may differ from ContactId for a manual contact).</param>
+        public void SetKeyFingerprint(string peerId, string fingerprint, bool changed)
         {
-            Fingerprint = fingerprint;
-            KeyChanged = changed;
             if (changed)
-                _logger.LogWarning("Key fingerprint for {ContactId} changed: {Fingerprint}", _contact.Id, fingerprint);
+            {
+                // Keep Fingerprint = the trusted key; the new one goes to PendingFingerprint.
+                PendingFingerprint = fingerprint;
+                _pendingKeyContactId = peerId;
+                KeyChanged = true;
+                IsConnecting = false;
+                _logger.LogWarning("Connection to {ContactId} refused: key changed, new fingerprint {Fingerprint}", peerId, fingerprint);
+            }
+            else
+            {
+                Fingerprint = fingerprint;
+                PendingFingerprint = string.Empty;
+                KeyChanged = false;
+            }
+            SendCommand.RaiseCanExecuteChanged();
+        }
+
+        /// <summary>
+        /// Re-pins the contact to the new key — after an explicit confirmation, because this is
+        /// exactly the click a man-in-the-middle needs the user to make. The service only accepts
+        /// if its pending key still has the fingerprint shown here, then reconnects this chat.
+        /// </summary>
+        private async Task AcceptNewKeyAsync()
+        {
+            var answer = MessageBox.Show(
+                "Neuen Schlüssel nur akzeptieren, wenn Sie den Fingerabdruck über einen anderen Kanal " +
+                "(Telefon, persönlich) mit dem Kontakt verglichen haben und er exakt übereinstimmt:\n\n" +
+                PendingFingerprint + "\n\n" +
+                "Stimmt er nicht überein, könnte jemand die Verbindung abfangen.",
+                "Neuen Schlüssel akzeptieren?",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes) return;
+
+            try
+            {
+                IsConnecting = true;
+                await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.AcceptPeerKey,
+                    new AcceptPeerKeyPayload(_pendingKeyContactId, PendingFingerprint, _contact.Id)));
+            }
+            catch (Exception ex)
+            {
+                IsConnecting = false;
+                _logger.LogWarning(ex, "Accept-key request failed for {ContactId}", _pendingKeyContactId);
+            }
         }
 
         /// <summary>

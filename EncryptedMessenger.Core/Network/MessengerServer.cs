@@ -34,13 +34,20 @@ namespace EncryptedMessenger.Core.Network
         // writers could interleave and corrupt the stream — serialise all server writes.
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null)
+        private readonly PeerKeyVerifier? _verifyPeerKey;
+
+        /// <param name="verifyPeerKey">
+        /// Consulted after the peer's KeyExchange and before its session key is accepted.
+        /// Null = accept any key (used only by tests/tools that have no contact store).
+        /// </param>
+        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null, PeerKeyVerifier? verifyPeerKey = null)
         {
             _port = port;
             _ownId = ownId;
             _ownDisplayName = ownDisplayName;
             _crypto = crypto;
             _logger = logger ?? NullLogger.Instance;
+            _verifyPeerKey = verifyPeerKey;
         }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
@@ -128,6 +135,15 @@ namespace EncryptedMessenger.Core.Network
                 contactId = kePkt.SenderId;
                 var peerPublicKey = kePkt.Payload;
                 _logger.LogDebug("Got peer key, contactId={ContactId}", Short(contactId));
+
+                // 2b. Key pinning: someone claiming to be a known contact must hold that
+                // contact's key. Otherwise hang up before accepting a session key, so
+                // nothing they send is ever attributed to that contact.
+                if (_verifyPeerKey != null && !await _verifyPeerKey(contactId, peerPublicKey))
+                {
+                    _logger.LogWarning("Handshake abort: untrusted key for {ContactId}", Short(contactId));
+                    return;
+                }
 
                 // 3. Receive encrypted AES session key
                 var skPkt = await PacketHelper.ReceiveAsync(stream, ct);

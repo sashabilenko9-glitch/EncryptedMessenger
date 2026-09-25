@@ -44,9 +44,11 @@ The UI and the service communicate over a **named pipe** (JSON messages). If no 
 - For every TCP connection a random **AES-256** key is generated, encrypted with the peer's public RSA key (**RSA-OAEP with SHA-256**) and sent over. Each connection keeps its own key, and incoming messages are attributed to the identity from that connection's handshake, not to a sender ID claimed inside a packet.
 - Messages are encrypted with **AES-256-GCM** (authenticated encryption) using that session key, with a fresh random nonce per message — tampering with a message in transit causes decryption to fail rather than silently returning corrupted data.
 - Local chat history is separately encrypted at rest with a persistent per-install AES-256-GCM key, independent of the per-session keys.
-- After each handshake, both sides can see a **SHA-256 fingerprint** of the peer's public key (shown in the chat header) to manually verify out-of-band that no one substituted a different key. If a contact's key ever changes from what was seen before, the app flags it in the UI.
+- **Key pinning (trust on first use, like SSH):** the first public key seen for a contact is pinned. On every later handshake, in both directions, a different key makes the app **refuse the connection before any session key is exchanged**. Redirecting a contact (a spoofed discovery packet, ARP spoofing, a wrong manual IP) therefore can't expose messages, only block the connection.
+- The chat header shows the **SHA-256 fingerprint** of the peer's key. When a contact's key changes, a red banner shows the new fingerprint and sending is disabled. Only after comparing it out-of-band (phone, in person) should the user click "Neuen Schlüssel akzeptieren", for example after a legitimate reinstall. The app accepts exactly the key with the fingerprint that was displayed.
+- The UI↔service named pipe is restricted to the current Windows user.
 
-> **Note:** This is a study project. Fingerprint verification is manual (no automated trust-on-first-use pinning beyond the change-detection above), so an active man-in-the-middle is only *detectable*, not automatically blocked. It is intended for confidential messaging inside a trusted local network.
+> **Note:** This is a study project. The very first connection to a contact is trusted automatically (TOFU). An attacker who intercepts that first connection, and every one after it, stays undetected, but as soon as the real peer connects directly, the key mismatch blocks and flags it. UDP discovery announcements themselves are not authenticated, so a spoofed one can still rename a contact or make a connection attempt fail. It is intended for confidential messaging inside a trusted local network.
 
 ## Tech stack
 

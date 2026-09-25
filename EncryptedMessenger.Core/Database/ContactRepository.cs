@@ -77,7 +77,7 @@ namespace EncryptedMessenger.Core.Database
                     d.Contacts.Add(new Contact
                     {
                         Id = contactId,
-                        DisplayName = contactId[..Math.Min(8, contactId.Length)],
+                        DisplayName = Contact.PlaceholderName(contactId),
                         IpAddress = ipAddress,
                         Port = port,
                         LastSeen = DateTime.UtcNow
@@ -94,6 +94,42 @@ namespace EncryptedMessenger.Core.Database
                 }
                 await d.SaveChangesAsync();
                 return true;
+            });
+
+        /// <summary>
+        /// Key pinning with trust-on-first-use, as ONE atomic step:
+        /// no key on file yet → pin <paramref name="publicKeyXml"/> and trust it (creating a
+        /// placeholder contact if the id is unknown); key on file → trust only if identical.
+        ///
+        /// Atomic because "check, then store" as two separate calls would let two first-time
+        /// handshakes for the same id (say, the real peer and an impostor) both see "no key
+        /// yet" and both be trusted. Inside one RunAsync the second one sees the first's pin.
+        /// </summary>
+        public Task<bool> PinOrVerifyKeyAsync(string contactId, string publicKeyXml)
+            => db.RunAsync(async d =>
+            {
+                var c = await d.Contacts.FindAsync(contactId);
+                if (c == null)
+                {
+                    d.Contacts.Add(new Contact
+                    {
+                        Id = contactId,
+                        DisplayName = Contact.PlaceholderName(contactId),
+                        PublicKeyXml = publicKeyXml,
+                        LastSeen = DateTime.UtcNow
+                    });
+                    await d.SaveChangesAsync();
+                    return true;
+                }
+
+                if (string.IsNullOrEmpty(c.PublicKeyXml))
+                {
+                    c.PublicKeyXml = publicKeyXml;
+                    await d.SaveChangesAsync();
+                    return true;
+                }
+
+                return c.PublicKeyXml == publicKeyXml;
             });
 
         public Task<List<Contact>> GetAllAsync()
@@ -155,6 +191,10 @@ namespace EncryptedMessenger.Core.Database
                     real.IpAddress = manual.IpAddress;
                     real.Port = manual.Port;
                     real.LastSeen = DateTime.UtcNow;
+                    // The real contact may be a stub created moments ago when its key was
+                    // pinned during this very handshake — keep the name the user typed.
+                    if (real.DisplayName == Contact.PlaceholderName(real.Id))
+                        real.DisplayName = manual.DisplayName;
                     d.Contacts.Remove(manual);
                     await d.SaveChangesAsync();
                     return realUserId;
