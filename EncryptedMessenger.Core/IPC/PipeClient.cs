@@ -41,10 +41,14 @@ namespace EncryptedMessenger.Core.IPC
             {
                 try
                 {
+                    // CurrentUserOnly: after connecting, .NET checks that the pipe is owned by
+                    // this Windows user and throws UnauthorizedAccessException otherwise. That
+                    // stops another account's process that grabbed our pipe name first from
+                    // receiving our plaintext messages ("pipe squatting").
                     _pipe = new NamedPipeClientStream(
                         ".", PipeServer.PipeName,
                         PipeDirection.InOut,
-                        PipeOptions.Asynchronous);
+                        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
                     await _pipe.ConnectAsync(5_000, ct); // 5 s timeout
                     _writer = new StreamWriter(_pipe, Encoding.UTF8) { AutoFlush = true };
@@ -54,6 +58,11 @@ namespace EncryptedMessenger.Core.IPC
                     await ReadLoopAsync(_pipe, ct);
                 }
                 catch (OperationCanceledException) { break; }
+                catch (UnauthorizedAccessException ex)
+                {
+                    // Not "service not started yet": something owned by ANOTHER user holds our pipe name.
+                    _logger.LogWarning(ex, "SECURITY: pipe '{PipeName}' is owned by another Windows user – refusing to connect", PipeServer.PipeName);
+                }
                 catch (Exception ex) { _logger.LogDebug(ex, "Service not reachable yet – retrying"); }
                 finally
                 {

@@ -46,12 +46,15 @@ namespace EncryptedMessenger.Core.IPC
         {
             while (!ct.IsCancellationRequested)
             {
+                // CurrentUserOnly: the pipe's ACL grants access to this Windows user only.
+                // Without it Windows' default pipe ACL lets other accounts on the machine
+                // connect and read our broadcasts — which contain decrypted message text.
                 var pipe = new NamedPipeServerStream(
                     PipeName,
                     PipeDirection.InOut,
                     NamedPipeServerStream.MaxAllowedServerInstances,
                     PipeTransmissionMode.Message,
-                    PipeOptions.Asynchronous);
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
                 try
                 {
