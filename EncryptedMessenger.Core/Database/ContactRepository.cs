@@ -32,34 +32,30 @@ namespace EncryptedMessenger.Core.Database
             });
 
         /// <summary>
-        /// Applies a discovery announcement. Discovery repeats every few seconds, so this only
-        /// writes to the database when something actually changed (new contact, new address or
-        /// name) or <see cref="Contact.LastSeen"/> is older than <paramref name="lastSeenResolution"/>.
-        /// Returns true if the contact was created or its name/address changed.
+        /// Applies a discovery announcement to an ALREADY KNOWN peer (discovery never creates
+        /// contacts — unknown peers only appear in the in-memory "nearby" list). Discovery
+        /// repeats every few seconds, so this only writes when name/address changed or
+        /// <see cref="Contact.LastSeen"/> is older than <paramref name="lastSeenResolution"/>.
+        /// Returns the peer's state (null = unknown) and whether name/address changed.
         /// </summary>
-        public Task<bool> ApplyDiscoveryAsync(Contact announced, TimeSpan lastSeenResolution)
+        public Task<(ContactState? State, bool Changed)> ApplyDiscoveryAsync(Contact announced, TimeSpan lastSeenResolution)
             => db.RunAsync(async d =>
             {
                 var existing = await d.Contacts.FindAsync(announced.Id);
-                if (existing == null)
-                {
-                    d.Contacts.Add(announced);
-                    await d.SaveChangesAsync();
-                    return true;
-                }
+                if (existing == null) return ((ContactState?)null, false);
 
                 var changed = existing.DisplayName != announced.DisplayName
                               || existing.IpAddress != announced.IpAddress
                               || existing.Port != announced.Port;
                 if (!changed && announced.LastSeen - existing.LastSeen < lastSeenResolution)
-                    return false;
+                    return (existing.State, false);
 
                 existing.DisplayName = announced.DisplayName;
                 existing.IpAddress = announced.IpAddress;
                 existing.Port = announced.Port;
                 existing.LastSeen = announced.LastSeen;
                 await d.SaveChangesAsync();
-                return changed;
+                return (existing.State, changed);
             });
 
         /// <summary>
@@ -135,6 +131,48 @@ namespace EncryptedMessenger.Core.Database
         public Task<List<Contact>> GetAllAsync()
             => db.RunAsync(d => d.Contacts.OrderBy(c => c.DisplayName).ToListAsync());
 
+        /// <summary>The contact list proper: only people the user added or accepted.</summary>
+        public Task<List<Contact>> GetAcceptedAsync()
+            => db.RunAsync(d => d.Contacts
+                                  .Where(c => c.State == ContactState.Accepted)
+                                  .OrderBy(c => c.DisplayName)
+                                  .ToListAsync());
+
+        /// <summary>
+        /// Makes <paramref name="contact"/> an accepted contact: creates it, or — if the peer is
+        /// already known (a Stranger row from a pinned key) — fills in name/address and promotes it.
+        /// </summary>
+        public Task AddAcceptedAsync(Contact contact)
+            => db.RunAsync(async d =>
+            {
+                var existing = await d.Contacts.FindAsync(contact.Id);
+                if (existing == null)
+                {
+                    contact.State = ContactState.Accepted;
+                    d.Contacts.Add(contact);
+                }
+                else
+                {
+                    existing.DisplayName = contact.DisplayName;
+                    existing.IpAddress = contact.IpAddress;
+                    existing.Port = contact.Port;
+                    existing.LastSeen = contact.LastSeen;
+                    existing.State = ContactState.Accepted;
+                }
+                await d.SaveChangesAsync();
+            });
+
+        /// <summary>Promotes a known peer to an accepted contact. Returns false if unknown or already accepted.</summary>
+        public Task<bool> AcceptAsync(string contactId)
+            => db.RunAsync(async d =>
+            {
+                var c = await d.Contacts.FindAsync(contactId);
+                if (c == null || c.State == ContactState.Accepted) return false;
+                c.State = ContactState.Accepted;
+                await d.SaveChangesAsync();
+                return true;
+            });
+
         public Task<Contact?> GetByIdAsync(string id)
             => db.RunAsync(async d => await d.Contacts.FindAsync(id));
 
@@ -195,6 +233,10 @@ namespace EncryptedMessenger.Core.Database
                     // pinned during this very handshake — keep the name the user typed.
                     if (real.DisplayName == Contact.PlaceholderName(real.Id))
                         real.DisplayName = manual.DisplayName;
+                    // Same for the relationship: a Stranger stub takes over what the user
+                    // decided for the manual entry.
+                    if (real.State == ContactState.Stranger)
+                        real.State = manual.State;
                     d.Contacts.Remove(manual);
                     await d.SaveChangesAsync();
                     return realUserId;
@@ -207,7 +249,9 @@ namespace EncryptedMessenger.Core.Database
                     IpAddress = manual.IpAddress,
                     Port = manual.Port,
                     PublicKeyXml = manual.PublicKeyXml,
-                    LastSeen = DateTime.UtcNow
+                    LastSeen = DateTime.UtcNow,
+                    State = manual.State,
+                    Verified = manual.Verified
                 });
                 d.Contacts.Remove(manual);
                 await d.SaveChangesAsync();

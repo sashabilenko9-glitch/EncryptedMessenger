@@ -90,6 +90,7 @@ namespace EncryptedMessenger.Core.Services
                     await Task.Delay(TimeSpan.FromSeconds(PeerDiscovery.BroadcastIntervalSeconds), ct);
                     foreach (var id in _presence.KnownContacts())
                         await PublishPresenceAsync(id);
+                    if (ExpireNearby()) await BroadcastNearbyAsync();
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex) { _logger.LogWarning(ex, "Presence sweep failed"); }
@@ -165,7 +166,7 @@ namespace EncryptedMessenger.Core.Services
         /// </summary>
         private async Task BroadcastContactListAsync()
         {
-            var contacts = await _contactRepo.GetAllAsync();
+            var contacts = await _contactRepo.GetAcceptedAsync();
             foreach (var c in contacts)
             {
                 c.IsOnline = _presence.IsOnline(c.Id);
@@ -487,17 +488,23 @@ namespace EncryptedMessenger.Core.Services
         {
             // Ensure the sender exists as a contact (keyed by their real UserId),
             // so the receiver sees the conversation and history matches.
+            // STAGE 1 (temporary): a message still makes the sender a contact, as before.
+            // Stage 2 replaces this with rejecting messages from non-accepted peers.
             var existing = await _contactRepo.GetByIdAsync(e.SenderId);
             if (existing == null)
             {
-                // Normally HandleContactConnectedAsync already created it (with the address);
+                // Normally the handshake already created a Stranger row (key pinning);
                 // this covers the race where the first message is handled before that.
-                await _contactRepo.UpsertAsync(new Contact
+                await _contactRepo.AddAcceptedAsync(new Contact
                 {
                     Id = e.SenderId,
                     DisplayName = Contact.PlaceholderName(e.SenderId),
                     LastSeen = DateTime.UtcNow
                 });
+            }
+            if (existing == null || await _contactRepo.AcceptAsync(e.SenderId))
+            {
+                if (RemoveNearby(e.SenderId)) await BroadcastNearbyAsync();
                 await BroadcastContactListAsync();
             }
 
@@ -553,7 +560,7 @@ namespace EncryptedMessenger.Core.Services
         {
             _presence.Heard(e.PeerId);
 
-            var contact = new Contact
+            var announced = new Contact
             {
                 Id = e.PeerId,
                 DisplayName = e.DisplayName,
@@ -561,9 +568,87 @@ namespace EncryptedMessenger.Core.Services
                 Port = e.Port,
                 LastSeen = DateTime.UtcNow
             };
-            if (await _contactRepo.ApplyDiscoveryAsync(contact, LastSeenWriteInterval))
-                await BroadcastContactListAsync();
-            await PublishPresenceAsync(e.PeerId);
+            var (state, changed) = await _contactRepo.ApplyDiscoveryAsync(announced, LastSeenWriteInterval);
+
+            if (state == ContactState.Accepted)
+            {
+                if (changed) await BroadcastContactListAsync();
+                await PublishPresenceAsync(e.PeerId);
+            }
+            else
+            {
+                // Not a contact (unknown, or only known by a pinned key): offer it in "nearby".
+                if (UpdateNearby(new NearbyPeerPayload(e.PeerId, e.DisplayName, e.IpAddress, e.Port)))
+                    await BroadcastNearbyAsync();
+            }
+        }
+
+        // ── Nearby (discovered peers that aren't contacts) ───────────────
+
+        // In memory only: it describes who is announcing right now, not a relationship.
+        private readonly Dictionary<string, (NearbyPeerPayload Peer, DateTime LastHeard)> _nearby = [];
+
+        /// <summary>Records an announcement; returns true if the list visibly changed (new peer, new name/address).</summary>
+        private bool UpdateNearby(NearbyPeerPayload peer)
+        {
+            lock (_nearby)
+            {
+                var visibleChange = !_nearby.TryGetValue(peer.PeerId, out var old) || old.Peer != peer;
+                _nearby[peer.PeerId] = (peer, DateTime.UtcNow);
+                return visibleChange;
+            }
+        }
+
+        /// <summary>Drops peers not heard within the presence timeout; returns true if any were removed.</summary>
+        private bool ExpireNearby()
+        {
+            var cutoff = DateTime.UtcNow - _presence.DiscoveryTimeout;
+            lock (_nearby)
+            {
+                var stale = _nearby.Where(kv => kv.Value.LastHeard < cutoff).Select(kv => kv.Key).ToList();
+                foreach (var id in stale) _nearby.Remove(id);
+                return stale.Count > 0;
+            }
+        }
+
+        private bool RemoveNearby(string peerId)
+        {
+            lock (_nearby) return _nearby.Remove(peerId);
+        }
+
+        private Task BroadcastNearbyAsync()
+        {
+            List<NearbyPeerPayload> list;
+            lock (_nearby) list = [.. _nearby.Values.Select(v => v.Peer).OrderBy(p => p.DisplayName)];
+            return _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.NearbyList, list));
+        }
+
+        /// <summary>
+        /// The user picked a nearby peer. Stage 1: add it as a contact directly.
+        /// (Stage 2 replaces this with a contact request the peer has to accept.)
+        /// </summary>
+        private async Task AddNearbyPeerAsync(string peerId)
+        {
+            NearbyPeerPayload? peer;
+            lock (_nearby) peer = _nearby.TryGetValue(peerId, out var entry) ? entry.Peer : null;
+            if (peer == null)
+            {
+                _logger.LogWarning("AddNearbyPeer: {PeerId} is not in the nearby list (expired?)", peerId);
+                return;
+            }
+
+            await _contactRepo.AddAcceptedAsync(new Contact
+            {
+                Id = peer.PeerId,
+                DisplayName = peer.DisplayName,
+                IpAddress = peer.IpAddress,
+                Port = peer.Port,
+                LastSeen = DateTime.UtcNow
+            });
+            RemoveNearby(peerId);
+            await BroadcastContactListAsync();
+            await BroadcastNearbyAsync();
+            await PublishPresenceAsync(peerId);
         }
 
         private async Task HandlePipeMessageAsync(PipeMessage msg)
@@ -580,6 +665,14 @@ namespace EncryptedMessenger.Core.Services
 
                 case PipeMessageType.GetContacts:
                     await BroadcastContactListAsync();
+                    break;
+
+                case PipeMessageType.GetNearby:
+                    await BroadcastNearbyAsync();
+                    break;
+
+                case PipeMessageType.AddNearbyPeer:
+                    await AddNearbyPeerAsync(msg.Deserialize<AddNearbyPeerPayload>().PeerId);
                     break;
 
                 case PipeMessageType.GetHistory:
@@ -634,7 +727,7 @@ namespace EncryptedMessenger.Core.Services
                         Port = add.Port,
                         LastSeen = DateTime.UtcNow
                     };
-                    await _contactRepo.UpsertAsync(manual);
+                    await _contactRepo.AddAcceptedAsync(manual);
                     await BroadcastContactListAsync();
                     break;
             }

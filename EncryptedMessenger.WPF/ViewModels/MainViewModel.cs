@@ -66,6 +66,11 @@ namespace EncryptedMessenger.WPF.ViewModels
         public AsyncRelayCommand RefreshContactsCommand { get; }
         public RelayCommand OpenSettingsCommand { get; }
         public RelayCommand AddContactCommand { get; }
+        public RelayCommand OpenNearbyCommand { get; }
+
+        // ── Nearby ────────────────────────────────────────────────────────
+        public NearbyViewModel Nearby { get; }
+        private Views.NearbyView? _nearbyWindow;
 
         // ── Constructor ───────────────────────────────────────────────────
         public MainViewModel(AppSettings settings, PipeClient pipeClient, ILoggerFactory loggerFactory)
@@ -93,6 +98,8 @@ namespace EncryptedMessenger.WPF.ViewModels
             RefreshContactsCommand = new AsyncRelayCommand(_ => RequestContactsAsync());
             OpenSettingsCommand = new RelayCommand(_ => OpenSettings());
             AddContactCommand = new RelayCommand(_ => OpenAddContact());
+            OpenNearbyCommand = new RelayCommand(_ => OpenNearby());
+            Nearby = new NearbyViewModel(_pipe, settings.Discovery, loggerFactory);
 
             _ = _pipe.StartAsync();
         }
@@ -139,6 +146,10 @@ namespace EncryptedMessenger.WPF.ViewModels
                     case PipeMessageType.DeliveryAck:
                         var ackId = msg.Deserialize<string>();
                         ActiveChat?.MarkDelivered(ackId);
+                        break;
+
+                    case PipeMessageType.NearbyList:
+                        Nearby.Replace(msg.Deserialize<List<NearbyPeerPayload>>());
                         break;
 
                     case PipeMessageType.MessageRead:
@@ -218,6 +229,19 @@ namespace EncryptedMessenger.WPF.ViewModels
         {
             contact.UnreadCount = 0;
             ActiveChat = new ChatViewModel(contact.Contact, _pipe, _settings.UserId, _loggerFactory);
+        }
+
+        /// <summary>One nearby window at a time: a second click brings the open one to the front.</summary>
+        private void OpenNearby()
+        {
+            if (_nearbyWindow != null)
+            {
+                _nearbyWindow.Activate();
+                return;
+            }
+            _nearbyWindow = new Views.NearbyView(Nearby) { Owner = Application.Current.MainWindow };
+            _nearbyWindow.Closed += (_, _) => _nearbyWindow = null;
+            _nearbyWindow.Show();
         }
 
         private void OpenSettings()

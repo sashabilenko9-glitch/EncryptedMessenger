@@ -55,14 +55,70 @@ namespace EncryptedMessenger.Core.Database
             {
                 e.HasKey(c => c.Id);
                 e.HasIndex(c => c.IpAddress);
+                e.Property(c => c.State).HasConversion<int>();
             });
         }
 
         /// <summary>
-        /// Creates the database and applies all pending migrations.
+        /// Creates the database if it doesn't exist, then upgrades an older schema in place.
         /// Call once at application startup.
+        ///
+        /// EnsureCreated() only builds a MISSING database — on an existing file it does nothing,
+        /// so columns added to the model later would be absent and every query touching them
+        /// would fail. <see cref="UpgradeSchema"/> adds such columns by hand. (EF migrations
+        /// automate exactly this; they'd be the next step if the schema keeps growing.)
         /// </summary>
-        public void EnsureCreated() => Database.EnsureCreated();
+        public void EnsureCreated()
+        {
+            Database.EnsureCreated();
+            UpgradeSchema();
+        }
+
+        /// <summary>
+        /// Each entry: table, column, and the SQL type/default to add it with. Adding is
+        /// idempotent — a column that already exists (new DB, or already upgraded) is skipped.
+        /// </summary>
+        private static readonly (string Table, string Column, string Definition)[] AddedColumns =
+        [
+            // DEFAULT 1 = ContactState.Accepted: everyone who was a contact before the
+            // request/accept flow existed stays a contact.
+            ("Contacts", "State",    "INTEGER NOT NULL DEFAULT 1"),
+            ("Contacts", "Verified", "INTEGER NOT NULL DEFAULT 0"),
+        ];
+
+        private void UpgradeSchema()
+        {
+            var connection = Database.GetDbConnection();
+            var openedHere = connection.State != System.Data.ConnectionState.Open;
+            if (openedHere) connection.Open();
+            try
+            {
+                foreach (var (table, column, definition) in AddedColumns)
+                {
+                    if (ColumnExists(connection, table, column)) continue;
+                    using var alter = connection.CreateCommand();
+                    // Names come from the constant list above, never from user input.
+                    alter.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {definition}";
+                    alter.ExecuteNonQuery();
+                }
+            }
+            finally
+            {
+                if (openedHere) connection.Close();
+            }
+        }
+
+        private static bool ColumnExists(System.Data.Common.DbConnection connection, string table, string column)
+        {
+            using var cmd = connection.CreateCommand();
+            // pragma_table_info lists a table's columns, one row each; "name" is the column name.
+            cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $column";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "$column";
+            p.Value = column;
+            cmd.Parameters.Add(p);
+            return Convert.ToInt64(cmd.ExecuteScalar()) > 0;
+        }
 
         // ── Serialised access ─────────────────────────────────────────────
 

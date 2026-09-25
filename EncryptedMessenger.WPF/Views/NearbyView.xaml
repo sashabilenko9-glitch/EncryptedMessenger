@@ -1,0 +1,119 @@
+<Window x:Class="EncryptedMessenger.WPF.Views.NearbyView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:EncryptedMessenger.WPF.ViewModels"
+        Title="In der Nähe – EncryptedMessenger"
+        Height="480" Width="420"
+        MinHeight="320" MinWidth="360"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgMainBrush}">
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <!-- title + explanation -->
+            <RowDefinition Height="*"/>
+            <!-- list / empty state -->
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0 0 0 14">
+            <TextBlock Text="📡  In der Nähe"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+            <TextBlock Text="Andere Instanzen im selben Netzwerk, die noch nicht in Ihren Kontakten sind."
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Margin="0 6 0 0"/>
+        </StackPanel>
+
+        <!-- Empty state (discovery on, nobody found) -->
+        <TextBlock Grid.Row="1"
+                   Text="Niemand gefunden. Andere Instanzen im selben WLAN erscheinen hier automatisch."
+                   Foreground="{StaticResource TextMutedBrush}"
+                   FontSize="13"
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   VerticalAlignment="Center">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                <Condition Binding="{Binding IsDiscoveryEnabled}" Value="True"/>
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </MultiDataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <!-- Discovery switched off in settings -->
+        <TextBlock Grid.Row="1"
+                   Text="Die UDP-Geräteerkennung ist in den Einstellungen deaktiviert."
+                   Foreground="{StaticResource TextMutedBrush}"
+                   FontSize="13"
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   VerticalAlignment="Center"
+                   Visibility="{Binding IsDiscoveryEnabled, Converter={StaticResource InvBoolToVis}}"/>
+
+        <ItemsControl Grid.Row="1"
+                      ItemsSource="{Binding Peers}"
+                      Visibility="{Binding IsEmpty, Converter={StaticResource InvBoolToVis}}">
+            <ItemsControl.Template>
+                <ControlTemplate TargetType="ItemsControl">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsPresenter/>
+                    </ScrollViewer>
+                </ControlTemplate>
+            </ItemsControl.Template>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:NearbyPeerViewModel}">
+                    <Border Background="{StaticResource BgHeaderBrush}"
+                            CornerRadius="10"
+                            Padding="12 10"
+                            Margin="0 0 0 8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" Width="40" Height="40" CornerRadius="20" Background="#2B4E6E">
+                                <TextBlock Text="{Binding FirstLetter}"
+                                           Foreground="White" FontWeight="Bold" FontSize="16"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+
+                            <StackPanel Grid.Column="1" Margin="12 0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding DisplayName}"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           FontWeight="SemiBold" FontSize="14"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding Address}"
+                                           Foreground="{StaticResource TextMutedBrush}"
+                                           FontSize="11" Margin="0 2 0 0"/>
+                            </StackPanel>
+
+                            <!-- The item's DataContext is the peer; the command lives on the window's view model. -->
+                            <Button Grid.Column="2"
+                                    Style="{StaticResource PrimaryBtn}"
+                                    Content="Hinzufügen"
+                                    Padding="14 7"
+                                    VerticalAlignment="Center"
+                                    Command="{Binding DataContext.AddCommand,
+                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}"/>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </Grid>
+</Window>

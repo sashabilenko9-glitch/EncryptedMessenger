@@ -17,6 +17,8 @@ namespace EncryptedMessenger.Core.IPC
         Connect          = 6,
         ContactIdChanged = 7,
         AcceptPeerKey    = 8,
+        GetNearby        = 9,
+        AddNearbyPeer    = 10,
 
         // Service → UI
         NewIncomingMessage = 100,
@@ -28,6 +30,7 @@ namespace EncryptedMessenger.Core.IPC
         KeyFingerprint     = 106,
         SendFailed         = 107, // Payload = messageId (string)
         MessageRead        = 108, // Payload = messageId (string)
+        NearbyList         = 109, // Payload = List<NearbyPeerPayload>
 
         // Bidirectional
         Heartbeat        = 200,
@@ -60,6 +63,11 @@ namespace EncryptedMessenger.Core.IPC
     public record AddContactPayload(string DisplayName, string IpAddress, int Port);
     public record ConnectPayload(string ContactId);
     public record ContactIdChangedPayload(string OldId, string NewId);
+
+    /// <summary>A peer announcing itself on the LAN that is not (yet) one of our contacts.</summary>
+    public record NearbyPeerPayload(string PeerId, string DisplayName, string IpAddress, int Port);
+
+    public record AddNearbyPeerPayload(string PeerId);
 
     /// <summary>
     /// History reply. Carries the conversation it belongs to, because it is broadcast to
