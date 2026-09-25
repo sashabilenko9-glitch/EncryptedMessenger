@@ -2,6 +2,16 @@
 
 ## Progress log
 
+- **2026-09-25 — Protocol version field (P2).** Before this, a v1.0.0 peer failed against v2 in three different confusing ways: its 48-byte CBC key+IV breaks AES-GCM on the first message, it silently ignores contact requests, and it doesn't understand `NotAContact`.
+  - New `ProtocolVersions` (`Legacy = 1` for v1.0.0, `Current = 2`). `NetworkPacket.ProtocolVersion` is set on KeyExchange; `DiscoveryPacket.ProtocolVersion` on announcements.
+  - **Default is 0, deliberately.** JSON from a v1 peer has no such field, and System.Text.Json leaves the property at its initial value. An initializer `= Current` would have made every v1 peer look current. `ProtocolVersions.Of(0)` means v1.
+  - The handshake checks the version first, before key pinning. The client still sends its own KeyExchange before hanging up so the other side can report the mismatch too. The server raises `IncompatiblePeer` and never announces the connection.
+  - The service remembers the mismatch, reports `IncompatiblePeer` to the UI and flags request cards (`IncompatibleVersion`). "In der Nähe" shows the announced version and disables "Anfrage senden" for incompatible peers; the chat header shows the reason instead of an endless "Verbinde…".
+  - Strict equality, no negotiation, so a rewritten version number can only fail a connection, never downgrade crypto. This rule is written down in `ProtocolVersions` for when negotiation is added.
+  - Tests 49 → 58: legacy detection, JSON without the field, v2 client vs. scripted v1 server (and the v1 side learns our version), v1 client vs. v2 server, service: v1 announcement in nearby, v1 connection reported to the UI. Adding `= Current` as the property default makes 4 of them fail.
+  - Also: `MessengerService.StartAsync` no longer `async` without an `await` (CS1998, visible with the .NET 8 SDK).
+  - **Environment note:** the .NET SDK 10 disappeared from the development machine during this session, and SDK 8 can't read the `.slnx` solution. This change was first built per project with SDK 8, then SDK 10.0.401 was reinstalled (`winget install Microsoft.DotNet.SDK.10`) and the solution built and tested normally again. CI installs its own SDKs and was unaffected.
+
 - **2026-09-25 — Quick fixes from the post-v2.0.0 review.**
   - **Discovery no longer renames contacts.** An announced name only replaces a placeholder name, so a name typed when adding by IP (or sent with a request) is kept. It also removes a spoofing vector: unauthenticated UDP can no longer rename a known contact.
   - **A TCP port that can't be opened is shown in the UI** ("⚠ TCP-Port … belegt – kein Empfang" under the profile). It used to be only logged while the UI said "online". New pipe message `ListenerFailed`, re-sent whenever the UI asks for its lists because the failure usually happens before the UI connects.
@@ -114,7 +124,7 @@ Grounded in actual counts from the codebase, not guesses:
 
 - **DI + interfaces** (`IMessageRepository`, `IContactRepository`, `ICryptoService`, `IMessengerService` via `Microsoft.Extensions.DependencyInjection`, one `ServiceCollection` shared between WPF and the Windows Service). Mainly valuable as groundwork for testing (P1.7) and for reconnect logic below — not an end in itself.
 - **Auto-reconnect with exponential backoff, heartbeat/ping, outbound message retry queue.** Real robustness win for a flaky Wi-Fi LAN, but a meaningful chunk of new state-machine logic. Worth doing, not blocking.
-- **Protocol versioning field** (`ProtocolVersion` in `NetworkPacket`, checked on handshake). Nearly free to add — do it while already touching the protocol for GCM/fingerprints (P1.4–5).
+- ✅ **DONE — Protocol versioning field.** `ProtocolVersion` in the KeyExchange packet and discovery announcements, checked first in the handshake; see Progress log.
 - **CI + polish:** `.editorconfig`, GitHub Actions (build + test on push), README architecture diagram, `docs/` protocol description. Cheap, good for a public repo, not functionally blocking.
 
 ## Explicitly skipped — and why

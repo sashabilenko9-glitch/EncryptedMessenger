@@ -64,17 +64,24 @@ namespace EncryptedMessenger.Core.Services
             _server.ContactDisconnected += OnContactDisconnected;
             _server.DeliveryAcknowledged += OnDeliveryAcknowledged;
             _server.ContactControlReceived += OnContactControlReceived;
+            _server.IncompatiblePeer += OnIncompatiblePeer;
             _discovery.PeerDiscovered += OnPeerDiscovered;
             _pipeServer.MessageReceived += OnPipeMessageReceived;
         }
 
-        public async Task StartAsync()
+        /// <summary>
+        /// Creates/upgrades the database and launches the background loops (TCP listener,
+        /// discovery, UI pipe, presence sweep). Returns as soon as they are started; it doesn't
+        /// wait for them — they run until <see cref="DisposeAsync"/>.
+        /// </summary>
+        public Task StartAsync()
         {
             _db.EnsureCreated();
             _ = Task.Run(RunListenerAsync);
             if (_settings.Discovery) _ = Task.Run(_discovery.StartAsync);
             _ = Task.Run(_pipeServer.StartAsync);
             _ = Task.Run(() => PresenceSweepLoopAsync(_cts.Token));
+            return Task.CompletedTask;
         }
 
         // Set when the TCP listener couldn't start (port taken by another app or another copy,
@@ -162,6 +169,12 @@ namespace EncryptedMessenger.Core.Services
             try
             {
                 return await GetOrCreateClientAsync(contact.Id, contact.IpAddress, contact.Port);
+            }
+            catch (IncompatibleProtocolException ex)
+            {
+                _logger.LogWarning(ex, "Connect to {ContactId} refused: protocol v{PeerVersion}", contact.Id, ex.PeerVersion);
+                await ReportIncompatibleAsync(ex.ContactId, ex.PeerVersion, contact.Id);
+                return null;
             }
             catch (UntrustedPeerKeyException ex)
             {
@@ -304,6 +317,8 @@ namespace EncryptedMessenger.Core.Services
                 _logger.LogError(ex, "SendMessage failed for recipient {RecipientId}", recipientId);
                 if (ex is UntrustedPeerKeyException untrusted)
                     await AnnounceRejectedKeyViaAsync(untrusted.ContactId, recipientId);
+                if (ex is IncompatibleProtocolException incompatible)
+                    await ReportIncompatibleAsync(incompatible.ContactId, incompatible.PeerVersion, recipientId);
                 return null;
             }
             finally { _clientsLock.Release(); }
@@ -338,6 +353,8 @@ namespace EncryptedMessenger.Core.Services
                 _logger.LogWarning(ex, "Connect failed for contact {RecipientId}", recipientId);
                 if (ex is UntrustedPeerKeyException untrusted)
                     await AnnounceRejectedKeyViaAsync(untrusted.ContactId, recipientId);
+                if (ex is IncompatibleProtocolException incompatible)
+                    await ReportIncompatibleAsync(incompatible.ContactId, incompatible.PeerVersion, recipientId);
                 _presence.SetReported(recipientId, false);
                 await _pipeServer.BroadcastAsync(PipeMessage.Create(
                     PipeMessageType.ContactOffline, new ContactStatusPayload(recipientId, false)));
@@ -432,6 +449,8 @@ namespace EncryptedMessenger.Core.Services
 
             _clients[finalId] = client;
             _rejectedVia.TryRemove(recipientId, out _);   // this address now answered with a trusted key
+            _incompatible.TryRemove(recipientId, out _);  // ...and speaks our protocol
+            _incompatible.TryRemove(finalId, out _);
 
             lock (link)
             {
@@ -595,6 +614,29 @@ namespace EncryptedMessenger.Core.Services
         private void OnDeliveryAcknowledged(object? _, DeliveryAckEventArgs e)
             => RunHandler(nameof(OnDeliveryAcknowledged), () => HandleDeliveryAcknowledgedAsync(e));
 
+        private void OnIncompatiblePeer(object? _, IncompatiblePeerEventArgs e)
+            => RunHandler(nameof(OnIncompatiblePeer), () => ReportIncompatibleAsync(e.ContactId, e.PeerVersion));
+
+        // ── Protocol version mismatches ──────────────────────────────────
+
+        /// <summary>Contact id (and, for manual contacts, the local id used to connect) → peer's protocol version.</summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _incompatible = new();
+
+        /// <summary>
+        /// A peer speaks another protocol version. Remember it (so request cards can say so) and
+        /// tell the UI, instead of leaving the user with a silently failing connection.
+        /// </summary>
+        private async Task ReportIncompatibleAsync(string peerId, int peerVersion, string? viaContactId = null)
+        {
+            _incompatible[peerId] = peerVersion;
+            if (viaContactId != null && viaContactId != peerId) _incompatible[viaContactId] = peerVersion;
+
+            await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.IncompatiblePeer,
+                new IncompatiblePeerPayload(peerId, peerVersion, ProtocolVersions.Current,
+                                            viaContactId != peerId ? viaContactId : null)));
+            await BroadcastRequestsAsync();
+        }
+
         private void OnContactControlReceived(object? _, ContactControlEventArgs e)
             => RunHandler($"{nameof(OnContactControlReceived)}({e.Type})", () => HandleContactControlAsync(e));
 
@@ -697,7 +739,7 @@ namespace EncryptedMessenger.Core.Services
 
                 default:
                     // Not a contact (unknown, or only known by a pinned key): offer it in "nearby".
-                    if (UpdateNearby(new NearbyPeerPayload(e.PeerId, e.DisplayName, e.IpAddress, e.Port)))
+                    if (UpdateNearby(new NearbyPeerPayload(e.PeerId, e.DisplayName, e.IpAddress, e.Port, e.ProtocolVersion)))
                         await BroadcastNearbyAsync();
                     break;
             }
@@ -711,7 +753,8 @@ namespace EncryptedMessenger.Core.Services
                 .Select(c => new ContactRequestPayload(c.Id, c.DisplayName, c.IpAddress,
                                                        Incoming: c.State == ContactState.IncomingRequest,
                                                        VerificationCode: CodeFor(c.PublicKeyXml),
-                                                       KeyRejected: _rejectedKeys.ContainsKey(c.Id) || _rejectedVia.ContainsKey(c.Id)))
+                                                       KeyRejected: _rejectedKeys.ContainsKey(c.Id) || _rejectedVia.ContainsKey(c.Id),
+                                                       IncompatibleVersion: _incompatible.TryGetValue(c.Id, out var v) ? v : null))
                 .ToList();
             await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.RequestList, requests));
         }

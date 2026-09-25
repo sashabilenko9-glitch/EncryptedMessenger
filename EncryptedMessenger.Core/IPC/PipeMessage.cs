@@ -37,6 +37,7 @@ namespace EncryptedMessenger.Core.IPC
         NearbyList         = 109, // Payload = List<NearbyPeerPayload>
         RequestList        = 110, // Payload = List<ContactRequestPayload>
         ListenerFailed     = 111, // Payload = TCP port (int): incoming connections can't be received
+        IncompatiblePeer   = 112, // Payload = IncompatiblePeerPayload
     }
 
     public class PipeMessage
@@ -67,7 +68,11 @@ namespace EncryptedMessenger.Core.IPC
     public record ContactIdChangedPayload(string OldId, string NewId);
 
     /// <summary>A peer announcing itself on the LAN that is not (yet) one of our contacts.</summary>
-    public record NearbyPeerPayload(string PeerId, string DisplayName, string IpAddress, int Port);
+    public record NearbyPeerPayload(string PeerId, string DisplayName, string IpAddress, int Port,
+                                    int ProtocolVersion = Network.ProtocolVersions.Current);
+
+    /// <summary>A peer was refused because it speaks another protocol version (see ProtocolVersions).</summary>
+    public record IncompatiblePeerPayload(string ContactId, int PeerVersion, int OurVersion, string? ViaContactId = null);
 
     public record AddNearbyPeerPayload(string PeerId);
 
@@ -75,9 +80,11 @@ namespace EncryptedMessenger.Core.IPC
     /// A pending contact request. <paramref name="Incoming"/>: they asked us (true) or we asked them (false).
     /// <paramref name="VerificationCode"/>: null until a handshake pinned their key (e.g. a request still waiting to be delivered).
     /// <paramref name="KeyRejected"/>: the last connection attempt was answered with a key that differs from the pinned one.
+    /// <paramref name="IncompatibleVersion"/>: set when the peer turned out to speak another protocol version.
     /// </summary>
     public record ContactRequestPayload(string ContactId, string DisplayName, string IpAddress, bool Incoming,
-                                        string? VerificationCode = null, bool KeyRejected = false);
+                                        string? VerificationCode = null, bool KeyRejected = false,
+                                        int? IncompatibleVersion = null);
 
     /// <summary>UI → service: the user compared <paramref name="VerificationCode"/> with the contact and it matched.</summary>
     public record MarkVerifiedPayload(string ContactId, string VerificationCode);

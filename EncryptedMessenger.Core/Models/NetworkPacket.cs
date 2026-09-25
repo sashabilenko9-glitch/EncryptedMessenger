@@ -17,6 +17,14 @@ namespace EncryptedMessenger.Core.Models
         public string? MessageId    { get; set; }
 
         public DateTime Timestamp   { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// Protocol version of the sender (see ProtocolVersions). Set on KeyExchange packets.
+        /// Deliberately defaults to 0, NOT to the current version: when JSON from an old peer has
+        /// no such field, System.Text.Json leaves the property at its default — an initializer of
+        /// "= Current" would make a v1 peer look like a current one.
+        /// </summary>
+        public int ProtocolVersion  { get; set; }
     }
 
     public enum PacketType
@@ -72,5 +80,8 @@ namespace EncryptedMessenger.Core.Models
 
         /// <summary>true = "Who is there?", false = "Here I am!".</summary>
         public bool   IsRequest   { get; set; }
+
+        /// <summary>Sender's protocol version; 0 (field missing) = a v1 peer. Same default rule as NetworkPacket.ProtocolVersion.</summary>
+        public int    ProtocolVersion { get; set; }
     }
 }

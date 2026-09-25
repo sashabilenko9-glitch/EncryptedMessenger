@@ -82,6 +82,19 @@ namespace EncryptedMessenger.Core.Network
             PeerPublicKeyXml = peerPublicKey;
             _logger.LogDebug("Got peer key, contactId={ContactId}", ContactId);
 
+            // 1a. Protocol version: checked first — comparing keys with a peer that speaks a
+            // different protocol is pointless. Our KeyExchange (it only carries the public key)
+            // still goes out before we hang up, so the peer learns our version and can show a
+            // clear error too instead of just "connection closed".
+            var peerVersion = ProtocolVersions.Of(kePkt.ProtocolVersion);
+            if (peerVersion != ProtocolVersions.Current)
+            {
+                _logger.LogWarning("Aborting handshake: {ContactId} uses protocol v{PeerVersion}, we use v{OurVersion}",
+                    ContactId, peerVersion, ProtocolVersions.Current);
+                try { await PacketHelper.SendAsync(_stream, OwnKeyExchange(), ct); } catch (IOException) { }
+                throw new IncompatibleProtocolException(ContactId, peerVersion);
+            }
+
             // 1b. Key pinning: is this the key we know for this contact? Checked BEFORE
             // step 3 — otherwise we'd already have handed a session key to whoever this is.
             if (_verifyPeerKey != null && !await _verifyPeerKey(ContactId, peerPublicKey))
@@ -90,14 +103,8 @@ namespace EncryptedMessenger.Core.Network
                 throw new UntrustedPeerKeyException(ContactId);
             }
 
-            // 2. Send own public key
-            await PacketHelper.SendAsync(_stream, new NetworkPacket
-            {
-                Type = PacketType.KeyExchange,
-                SenderId = _ownId,
-                Payload = _crypto.PublicKeyXml,
-                Timestamp = DateTime.UtcNow
-            }, ct);
+            // 2. Send own public key (and protocol version)
+            await PacketHelper.SendAsync(_stream, OwnKeyExchange(), ct);
 
             // 3. Create AES session key and send it encrypted
             _sessionId = CryptoManager.NewSessionId(ContactId);
@@ -207,6 +214,15 @@ namespace EncryptedMessenger.Core.Network
             _crypto.RemoveSession(_sessionId);
             Disconnected?.Invoke(this, EventArgs.Empty);
         }
+
+        private NetworkPacket OwnKeyExchange() => new()
+        {
+            Type = PacketType.KeyExchange,
+            SenderId = _ownId,
+            Payload = _crypto.PublicKeyXml,
+            ProtocolVersion = ProtocolVersions.Current,
+            Timestamp = DateTime.UtcNow
+        };
 
         public void Dispose()
         {

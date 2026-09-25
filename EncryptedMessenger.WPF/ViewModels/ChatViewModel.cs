@@ -228,6 +228,21 @@ namespace EncryptedMessenger.WPF.ViewModels
             SendCommand.RaiseCanExecuteChanged();
         }
 
+        private string? _protocolWarning;
+        /// <summary>Set when the contact's app speaks another protocol version; shown in the header.</summary>
+        public string? ProtocolWarning
+        {
+            get => _protocolWarning;
+            private set => SetField(ref _protocolWarning, value);
+        }
+
+        /// <summary>Called by MainViewModel when the service refused this contact for a protocol version mismatch.</summary>
+        public void SetIncompatible(int peerVersion)
+        {
+            IsConnecting = false;
+            ProtocolWarning = $"⚠ Kontakt nutzt Protokoll v{peerVersion}, diese App v{Core.Network.ProtocolVersions.Current} – bitte beide aktualisieren";
+        }
+
         /// <summary>Called by MainViewModel when the contact list arrives with this contact's Verified flag.</summary>
         public void SetVerified(bool verified) => IsVerified = verified;
 

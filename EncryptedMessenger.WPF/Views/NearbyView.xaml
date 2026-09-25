@@ -84,6 +84,10 @@
                                             <TextBlock Text="⚠ Anderer Schlüssel als bekannt – Verbindung blockiert"
                                                        Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"
                                                        Visibility="{Binding KeyRejected, Converter={StaticResource BoolToVis}}"/>
+                                            <!-- The peer speaks another protocol version (see ProtocolVersions) -->
+                                            <TextBlock Text="{Binding IncompatibleText}"
+                                                       Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"
+                                                       Visibility="{Binding IncompatibleText, Converter={StaticResource NullToVis}}"/>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                             <Button Style="{StaticResource IconBtn}" Content="Ablehnen" Padding="10 7" Margin="0 0 6 0"
@@ -128,6 +132,10 @@
                                             <TextBlock Text="⚠ Anderer Schlüssel als bekannt – Verbindung blockiert"
                                                        Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"
                                                        Visibility="{Binding KeyRejected, Converter={StaticResource BoolToVis}}"/>
+                                            <!-- The peer speaks another protocol version (see ProtocolVersions) -->
+                                            <TextBlock Text="{Binding IncompatibleText}"
+                                                       Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"
+                                                       Visibility="{Binding IncompatibleText, Converter={StaticResource NullToVis}}"/>
                                         </StackPanel>
                                         <Button Grid.Column="2" Style="{StaticResource IconBtn}" Content="Zurückziehen" Padding="10 7"
                                                 VerticalAlignment="Center"
@@ -192,6 +200,7 @@
                                                    FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
                                         <TextBlock Text="{Binding Address}" Foreground="{StaticResource TextMutedBrush}"
                                                    FontSize="11" Margin="0 2 0 0"/>
+<!-- Announced another protocol version: a request couldn't be delivered, so the button is disabled -->                                        <TextBlock Text="{Binding IncompatibleText}"                                                   Foreground="#FF8080" FontSize="11" TextWrapping="Wrap" Margin="0 3 0 0"                                                   Visibility="{Binding IsCompatible, Converter={StaticResource InvBoolToVis}}"/>
                                     </StackPanel>
                                     <!-- The item's DataContext is the peer; the command lives on the window's view model. -->
                                     <Button Grid.Column="2" Style="{StaticResource PrimaryBtn}" Content="Anfrage senden" Padding="14 7"

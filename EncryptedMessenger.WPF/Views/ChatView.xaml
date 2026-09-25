@@ -117,6 +117,13 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <!-- Only when the contact's app speaks another protocol version -->
+                    <TextBlock Text="{Binding ProtocolWarning}"
+                               Foreground="#FF8080"
+                               FontSize="11"
+                               Margin="0 2 0 0"
+                               TextWrapping="Wrap"
+                               Visibility="{Binding ProtocolWarning, Converter={StaticResource NullToVis}}"/>
                 </StackPanel>
 
                 <!-- Right-side info + IP -->

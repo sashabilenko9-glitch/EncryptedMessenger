@@ -20,12 +20,22 @@ namespace EncryptedMessenger.Core.Network
         public string? IpAddress    { get; } = ipAddress;
     }
 
-    public class PeerDiscoveredEventArgs(string peerId, string displayName, string ip, int port) : EventArgs
+    public class PeerDiscoveredEventArgs(string peerId, string displayName, string ip, int port, int protocolVersion) : EventArgs
     {
         public string PeerId      { get; } = peerId;
         public string DisplayName { get; } = displayName;
         public string IpAddress   { get; } = ip;
         public int    Port        { get; } = port;
+
+        /// <summary>Already normalised: a v1 announcement (no field) reports <see cref="ProtocolVersions.Legacy"/>.</summary>
+        public int    ProtocolVersion { get; } = protocolVersion;
+    }
+
+    /// <summary>A peer connected with a different protocol version; the handshake was aborted.</summary>
+    public class IncompatiblePeerEventArgs(string contactId, int peerVersion) : EventArgs
+    {
+        public string ContactId   { get; } = contactId;
+        public int    PeerVersion { get; } = peerVersion;
     }
 
     /// <summary>A contact-request control packet (ContactRequest/Accept/Decline/NotAContact) from <see cref="ContactId"/>.</summary>

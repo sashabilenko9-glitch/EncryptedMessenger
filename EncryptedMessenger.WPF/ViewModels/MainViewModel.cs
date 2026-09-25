@@ -160,6 +160,13 @@ namespace EncryptedMessenger.WPF.ViewModels
                         Nearby.Replace(msg.Deserialize<List<NearbyPeerPayload>>());
                         break;
 
+                    case PipeMessageType.IncompatiblePeer:
+                        var incompatible = msg.Deserialize<IncompatiblePeerPayload>();
+                        if (ActiveChat != null
+                            && (ActiveChat.ContactId == incompatible.ContactId || ActiveChat.ContactId == incompatible.ViaContactId))
+                            ActiveChat.SetIncompatible(incompatible.PeerVersion);
+                        break;
+
                     case PipeMessageType.ListenerFailed:
                         ListenerError = $"⚠ TCP-Port {msg.Deserialize<int>()} belegt – kein Empfang";
                         break;

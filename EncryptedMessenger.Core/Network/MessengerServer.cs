@@ -17,6 +17,7 @@ namespace EncryptedMessenger.Core.Network
         public event EventHandler<ContactStatusEventArgs>? ContactDisconnected;
         public event EventHandler<DeliveryAckEventArgs>? DeliveryAcknowledged;
         public event EventHandler<ContactControlEventArgs>? ContactControlReceived;
+        public event EventHandler<IncompatiblePeerEventArgs>? IncompatiblePeer;
 
         private readonly int _port;
         private readonly string _ownId;
@@ -121,12 +122,13 @@ namespace EncryptedMessenger.Core.Network
 
             try
             {
-                // 1. Send own public key
+                // 1. Send own public key (and protocol version — the client checks it first)
                 await PacketHelper.SendAsync(stream, new NetworkPacket
                 {
                     Type = PacketType.KeyExchange,
                     SenderId = _ownId,
                     Payload = _crypto.PublicKeyXml,
+                    ProtocolVersion = ProtocolVersions.Current,
                     Timestamp = DateTime.UtcNow
                 }, ct);
                 _logger.LogDebug("Sent own public key");
@@ -141,6 +143,17 @@ namespace EncryptedMessenger.Core.Network
                 contactId = kePkt.SenderId;
                 var peerPublicKey = kePkt.Payload;
                 _logger.LogDebug("Got peer key, contactId={ContactId}", Short(contactId));
+
+                // 2a. Protocol version, before anything else about this peer. Not announced as a
+                // connection (no ContactConnected), just reported so the UI can explain it.
+                var peerVersion = ProtocolVersions.Of(kePkt.ProtocolVersion);
+                if (peerVersion != ProtocolVersions.Current)
+                {
+                    _logger.LogWarning("Handshake abort: {ContactId} uses protocol v{PeerVersion}, we use v{OurVersion}",
+                        Short(contactId), peerVersion, ProtocolVersions.Current);
+                    IncompatiblePeer?.Invoke(this, new IncompatiblePeerEventArgs(contactId, peerVersion));
+                    return;
+                }
 
                 // 2b. Key pinning: someone claiming to be a known contact must hold that
                 // contact's key. Otherwise hang up before accepting a session key, so

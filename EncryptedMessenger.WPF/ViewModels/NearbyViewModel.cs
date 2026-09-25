@@ -42,7 +42,7 @@ namespace EncryptedMessenger.WPF.ViewModels
 
             AddCommand = new AsyncRelayCommand(
                 p => SendAsync(PipeMessageType.AddNearbyPeer, p is NearbyPeerViewModel n ? new AddNearbyPeerPayload(n.PeerId) : null),
-                p => p is NearbyPeerViewModel);
+                p => p is NearbyPeerViewModel { IsCompatible: true });
             AcceptCommand  = RequestCommand(PipeMessageType.AcceptContactRequest);
             DeclineCommand = RequestCommand(PipeMessageType.DeclineContactRequest);
             CancelCommand  = RequestCommand(PipeMessageType.CancelContactRequest);
@@ -86,6 +86,11 @@ namespace EncryptedMessenger.WPF.ViewModels
 
     public class NearbyPeerViewModel(NearbyPeerPayload peer)
     {
+        /// <summary>Same protocol version as this app; otherwise a request couldn't be delivered.</summary>
+        public bool IsCompatible { get; } = peer.ProtocolVersion == Core.Network.ProtocolVersions.Current;
+        public string IncompatibleText { get; } =
+            $"⚠ Andere Version (Protokoll v{peer.ProtocolVersion}, diese App v{Core.Network.ProtocolVersions.Current}) – bitte beide aktualisieren";
+
         public string PeerId { get; } = peer.PeerId;
         public string DisplayName { get; } = peer.DisplayName;
         public string Address { get; } = $"{peer.IpAddress}:{peer.Port}";
@@ -103,6 +108,11 @@ namespace EncryptedMessenger.WPF.ViewModels
 
         /// <summary>The address answered with a different key than the one known for this peer; the connection was refused.</summary>
         public bool KeyRejected { get; } = request.KeyRejected;
+
+        /// <summary>Set when the peer turned out to speak another protocol version; null otherwise.</summary>
+        public string? IncompatibleText { get; } = request.IncompatibleVersion is { } v
+            ? $"⚠ Andere Version (Protokoll v{v}, diese App v{Core.Network.ProtocolVersions.Current}) – bitte beide aktualisieren"
+            : null;
 
         /// <summary>Line under the name: the code to compare, or why there is none yet.</summary>
         public string CodeText { get; } = request.VerificationCode is { } code

@@ -97,7 +97,8 @@ namespace EncryptedMessenger.Core.Network
                 PeerId = _ownId,
                 DisplayName = _ownDisplayName,
                 TcpPort = _ownTcpPort,
-                IsRequest = isRequest
+                IsRequest = isRequest,
+                ProtocolVersion = ProtocolVersions.Current
             };
             var data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
 
@@ -162,7 +163,7 @@ namespace EncryptedMessenger.Core.Network
                     packet.DisplayName, ip, packet.TcpPort);
 
                 PeerDiscovered?.Invoke(this, new PeerDiscoveredEventArgs(
-                    packet.PeerId, packet.DisplayName, ip, packet.TcpPort));
+                    packet.PeerId, packet.DisplayName, ip, packet.TcpPort, ProtocolVersions.Of(packet.ProtocolVersion)));
 
                 if (packet.IsRequest) await BroadcastAsync(isRequest: false);
             }
