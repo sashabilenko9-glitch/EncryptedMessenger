@@ -19,13 +19,14 @@ A serverless, end-to-end encrypted peer-to-peer messenger for the local network 
 
 ## Architecture
 
-The solution is split into three projects:
+The solution is split into four projects:
 
 | Project | Type | Responsibility |
 |---|---|---|
 | `EncryptedMessenger.Core` | Class library | Crypto, networking, IPC, database, models — the shared logic |
 | `EncryptedMessenger.WindowsService` | Worker Service | Runs the network stack as a background Windows service |
 | `EncryptedMessenger.WPF` | WPF app | Graphical user interface (startup project) |
+| `EncryptedMessenger.Tests` | xUnit tests | Regression tests, run in CI on every push |
 
 The UI and the service communicate over a **named pipe** (JSON messages). If no service is running, the WPF app starts the core logic in-process automatically (standalone mode).
 
@@ -38,6 +39,14 @@ The UI and the service communicate over a **named pipe** (JSON messages). If no 
                                      v                    v
                           other instances on the local network
 ```
+
+### Detailed diagram
+
+Every box names the file that implements it: UI, service runtime, peer communication, encryption, local persistence, and build & test.
+
+![EncryptedMessenger architecture](docs/architecture.png)
+
+The diagram is generated from [`docs/architecture.mmd`](docs/architecture.mmd) (Mermaid). To change it, edit the text file and re-render it with the command in its first lines.
 
 ## Security model
 
@@ -129,14 +138,20 @@ No installation or database server is required — external libraries are restor
 EncryptedMessenger/
 ├─ EncryptedMessenger.slnx
 ├─ EncryptedMessenger.Core/
-│  ├─ Encryption/      # RsaCryptoService, AesCryptoService, CryptoManager
-│  ├─ Network/         # MessengerServer, MessengerClient, PacketHelper, PeerDiscovery
+│  ├─ Encryption/      # RsaCryptoService, AesCryptoService, CryptoManager, DpapiProtectedFile, VerificationCode
+│  ├─ Network/         # MessengerServer, MessengerClient, PacketHelper, PeerDiscovery, PeerKeyVerification
 │  ├─ IPC/             # PipeServer, PipeClient, PipeMessage
-│  ├─ Database/        # AppDbContext, ContactRepository, MessageRepository
+│  ├─ Database/        # AppDbContext (+ schema upgrade), ContactRepository, MessageRepository
 │  ├─ Models/          # Contact, Message, AppSettings, NetworkPacket
-│  └─ Services/        # MessengerService (orchestrator)
+│  ├─ Logging/         # AppLogging
+│  └─ Services/        # MessengerService (orchestrator), PresenceTracker
 ├─ EncryptedMessenger.WindowsService/   # Program, MessengerWorker
-└─ EncryptedMessenger.WPF/              # App, Views, ViewModels, Converters, Helpers
+├─ EncryptedMessenger.WPF/              # App, Views, ViewModels, Converters, Helpers
+├─ EncryptedMessenger.Tests/            # xUnit regression tests
+├─ .github/workflows/ci.yml             # GitHub Actions: build + test on Windows
+└─ docs/
+   ├─ architecture.mmd / .png           # architecture diagram (source / rendered)
+   └─ v2/ROADMAP.md                     # progress log and plans
 ```
 
 ## License

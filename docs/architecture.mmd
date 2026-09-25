@@ -1,0 +1,127 @@
+%% EncryptedMessenger architecture (v2.0.0). Rendered to docs/architecture.png with:
+%%   npx -p @mermaid-js/mermaid-cli mmdc -i docs/architecture.mmd -o docs/architecture.png -b "#F3E8FB" -s 4
+%% Every box names the file that implements it; keep this in sync when the code changes.
+
+flowchart TB
+    user((Messenger user))
+    lan((LAN peers))
+
+    subgraph ui["Desktop interface · EncryptedMessenger.WPF"]
+        app["WPF app<br/>[App.xaml.cs]"]
+        views["Chat, contacts, Kontakte finden, settings<br/>[Views/*.xaml]"]
+        vms["View models<br/>[ViewModels/*.cs]"]
+        pipec["Pipe client<br/>[PipeClient.cs]"]
+    end
+
+    subgraph svc["Service runtime · Core (Windows Service, or inside the app in standalone mode)"]
+        host["Service host<br/>[Program.cs, MessengerWorker.cs]"]
+        orch["Messenger orchestrator<br/>consent · key pinning · retry of owed packets<br/>[MessengerService.cs]"]
+        pipes["Pipe server · current Windows user only<br/>[PipeServer.cs]"]
+        presence["Presence · online / offline with timeout<br/>[PresenceTracker.cs]"]
+        settings["App settings · persistent UserId<br/>[AppSettings.cs → data/settings.json]"]
+        logging["File logging<br/>[AppLogging.cs → data/logs]"]
+    end
+
+    subgraph net["Peer communication"]
+        disc["Peer discovery · UDP broadcast<br/>[PeerDiscovery.cs]"]
+        client["TCP peer client · outbound<br/>[MessengerClient.cs]"]
+        server["TCP listener · inbound<br/>[MessengerServer.cs]"]
+        verifier["Handshake key check<br/>[PeerKeyVerification.cs]"]
+        framing["Packet framing · JSON, length-prefixed<br/>[PacketHelper.cs, NetworkPacket.cs]"]
+    end
+
+    subgraph crypto["Encryption"]
+        cm["Crypto manager<br/>per-connection session keys · storage key<br/>[CryptoManager.cs]"]
+        rsa["RSA-2048 OAEP key exchange, fingerprints<br/>[RsaCryptoService.cs]"]
+        aes["AES-256-GCM<br/>[AesCryptoService.cs]"]
+        dpapi["DPAPI-protected key files<br/>[DpapiProtectedFile.cs → data/private.key, storage.key]"]
+        code["40-digit verification code<br/>[VerificationCode.cs]"]
+    end
+
+    subgraph store["Local persistence"]
+        crepo["Contact repository<br/>key pinning · request state machine<br/>[ContactRepository.cs]"]
+        mrepo["Message repository<br/>history · read-receipt queue<br/>[MessageRepository.cs]"]
+        dbctx[("SQLite + schema upgrade<br/>[AppDbContext.cs → data/messenger.db]")]
+        records["Contact / Message records<br/>[Contact.cs, Message.cs]"]
+    end
+
+    subgraph qa["Build & test · not shipped"]
+        tests["xUnit regression tests<br/>[EncryptedMessenger.Tests]"]
+        ci["GitHub Actions CI · Windows runner<br/>[.github/workflows/ci.yml]"]
+    end
+
+    %% Desktop interface
+    user -->|uses| views
+    views -->|binds to| vms
+    app -->|creates| vms
+    app -->|creates| pipec
+    vms -->|commands| pipec
+    pipec <-->|JSON lines over a named pipe| pipes
+    app -.->|starts in-process if no service answers| orch
+    app -->|configures| logging
+
+    %% Service runtime
+    host -->|starts| orch
+    host -->|configures| logging
+    orch -->|broadcasts contacts, requests, messages| pipes
+    orch -->|tracks| presence
+    orch -->|reads| settings
+
+    %% Persistence
+    orch -->|pins keys, contact requests| crepo
+    orch -->|stores messages, owed receipts| mrepo
+    crepo -->|reads and writes| dbctx
+    mrepo -->|reads and writes| dbctx
+    dbctx -.-|maps| records
+
+    %% Encryption used by the orchestrator
+    orch -->|history at rest| cm
+    orch -->|computes| code
+
+    %% Peer communication
+    orch -->|starts optionally| disc
+    orch -->|starts, consent check| server
+    orch -->|connects, sends| client
+    orch -->|implements| verifier
+    client -->|calls before sending a session key| verifier
+    server -->|calls before accepting a session key| verifier
+    client -->|frames packets| framing
+    server -->|frames packets| framing
+    client -->|encrypts| cm
+    server -->|decrypts| cm
+    cm -->|session-key exchange| rsa
+    cm -->|message content| aes
+    cm -->|loads keys| dpapi
+
+    %% Network
+    disc <-->|UDP announcements| lan
+    client <-->|TCP: handshake, messages, acks, contact requests| lan
+    server <-->|TCP| lan
+
+    %% Quality
+    ci -->|builds and runs| tests
+    tests -.->|exercises| orch
+
+    %% Styling: same palette as the original diagram
+    classDef person fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A
+    classDef uiNode fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A
+    classDef svcNode fill:#FEF3C7,stroke:#D97706,color:#78350F
+    classDef netNode fill:#DCFCE7,stroke:#16A34A,color:#14532D
+    classDef cryptoNode fill:#FFE4E6,stroke:#E11D48,color:#881337
+    classDef storeNode fill:#E0E7FF,stroke:#4F46E5,color:#312E81
+    classDef qaNode fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-dasharray:4 3
+
+    class user,lan person
+    class app,views,vms,pipec uiNode
+    class host,orch,pipes,presence,settings,logging svcNode
+    class disc,client,server,verifier,framing netNode
+    class cm,rsa,aes,dpapi,code cryptoNode
+    class crepo,mrepo,dbctx,records storeNode
+    class tests,ci qaNode
+
+    style ui fill:#F5F5F5,stroke:#D4D4D4
+    style svc fill:#F5F5F5,stroke:#D4D4D4
+    style net fill:#F5F5F5,stroke:#D4D4D4
+    style crypto fill:#F5F5F5,stroke:#D4D4D4
+    style store fill:#F5F5F5,stroke:#D4D4D4
+    style qa fill:#FAFAFA,stroke:#CBD5E1,stroke-dasharray:4 3
