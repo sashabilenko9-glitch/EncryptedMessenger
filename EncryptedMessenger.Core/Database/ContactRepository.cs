@@ -243,17 +243,36 @@ namespace EncryptedMessenger.Core.Database
             => db.RunAsync(d => d.Contacts.FirstOrDefaultAsync(c => c.IpAddress == ip));
 
         /// <summary>
-        /// Updates just the stored public key for a contact, without touching
-        /// display name / IP / port (unlike <see cref="UpsertAsync"/>, which would
-        /// overwrite them with whatever partial <see cref="Contact"/> is passed in).
+        /// Re-pins a contact to a different public key (after the user accepted a changed key),
+        /// without touching display name / IP / port (unlike <see cref="UpsertAsync"/>, which
+        /// would overwrite them with whatever partial <see cref="Contact"/> is passed in).
+        /// Also clears <see cref="Contact.Verified"/>: that confirmation was about the OLD key,
+        /// and silently carrying it over would vouch for a key nobody compared.
         /// </summary>
         public Task SetPublicKeyXmlAsync(string contactId, string publicKeyXml)
             => db.RunAsync(async d =>
             {
                 var c = await d.Contacts.FindAsync(contactId);
                 if (c == null) return;
+                if (c.PublicKeyXml != publicKeyXml) c.Verified = false;
                 c.PublicKeyXml = publicKeyXml;
                 await d.SaveChangesAsync();
+            });
+
+        /// <summary>
+        /// Marks the contact verified, but only if its pinned key still has the verification
+        /// code the user actually compared. Returns false otherwise (no key yet, or the key
+        /// changed between showing the code and the click).
+        /// </summary>
+        public Task<bool> MarkVerifiedAsync(string contactId, string comparedCode, Func<string, string> codeForKey)
+            => db.RunAsync(async d =>
+            {
+                var c = await d.Contacts.FindAsync(contactId);
+                if (c == null || string.IsNullOrEmpty(c.PublicKeyXml) || codeForKey(c.PublicKeyXml) != comparedCode)
+                    return false;
+                c.Verified = true;
+                await d.SaveChangesAsync();
+                return true;
             });
 
         public Task UpdateLastSeenAsync(string contactId)

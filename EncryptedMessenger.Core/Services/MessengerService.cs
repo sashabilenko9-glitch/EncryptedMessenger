@@ -468,7 +468,29 @@ namespace EncryptedMessenger.Core.Services
             _rejectedKeys.TryRemove(contactId, out _);   // the real key just worked; drop any stale candidate
             await _pipeServer.BroadcastAsync(PipeMessage.Create(
                 PipeMessageType.KeyFingerprint,
-                new KeyFingerprintPayload(contactId, RsaCryptoService.ComputeFingerprint(publicKeyXml), Changed: false)));
+                new KeyFingerprintPayload(contactId, RsaCryptoService.ComputeFingerprint(publicKeyXml), Changed: false,
+                                          VerificationCode: CodeFor(publicKeyXml))));
+        }
+
+        /// <summary>Verification code for us + the given (pinned) peer key; null if the key isn't known yet.</summary>
+        private string? CodeFor(string? peerPublicKeyXml)
+            => string.IsNullOrEmpty(peerPublicKeyXml) ? null : VerificationCode.Compute(_crypto.PublicKeyXml, peerPublicKeyXml);
+
+        /// <summary>
+        /// The user says the code they compared with the contact matched. Accepted only if it is
+        /// still the code of the currently pinned key (see ContactRepository.MarkVerifiedAsync).
+        /// </summary>
+        private async Task MarkVerifiedAsync(string contactId, string comparedCode)
+        {
+            if (await _contactRepo.MarkVerifiedAsync(contactId, comparedCode, key => VerificationCode.Compute(_crypto.PublicKeyXml, key)))
+            {
+                _logger.LogInformation("Contact {ContactId} marked as verified", contactId);
+                await BroadcastContactListAsync();
+            }
+            else
+            {
+                _logger.LogWarning("MarkVerified for {ContactId} ignored: code doesn't match the pinned key", contactId);
+            }
         }
 
         /// <summary>
@@ -640,7 +662,8 @@ namespace EncryptedMessenger.Core.Services
         {
             var requests = (await _contactRepo.GetRequestsAsync())
                 .Select(c => new ContactRequestPayload(c.Id, c.DisplayName, c.IpAddress,
-                                                       Incoming: c.State == ContactState.IncomingRequest))
+                                                       Incoming: c.State == ContactState.IncomingRequest,
+                                                       VerificationCode: CodeFor(c.PublicKeyXml)))
                 .ToList();
             await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.RequestList, requests));
         }
@@ -862,6 +885,11 @@ namespace EncryptedMessenger.Core.Services
 
                 case PipeMessageType.DeclineContactRequest:
                     await AnswerContactRequestAsync(msg.Deserialize<ContactIdPayload>().ContactId, accept: false);
+                    break;
+
+                case PipeMessageType.MarkVerified:
+                    var verified = msg.Deserialize<MarkVerifiedPayload>();
+                    await MarkVerifiedAsync(verified.ContactId, verified.VerificationCode);
                     break;
 
                 case PipeMessageType.CancelContactRequest:

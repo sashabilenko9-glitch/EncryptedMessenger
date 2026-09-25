@@ -77,6 +77,9 @@
                                                        FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
                                             <TextBlock Text="möchte Sie als Kontakt hinzufügen" Foreground="{StaticResource TextMutedBrush}"
                                                        FontSize="11" Margin="0 2 0 0"/>
+                                            <!-- Compare this with the requester before accepting (phone / in person) -->
+                                            <TextBlock Text="{Binding CodeText}" Foreground="{StaticResource AccentBrush}"
+                                                       FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0 3 0 0"/>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                             <Button Style="{StaticResource IconBtn}" Content="Ablehnen" Padding="10 7" Margin="0 0 6 0"
@@ -115,6 +118,8 @@
                                                        FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
                                             <TextBlock Text="wartet auf Bestätigung…" Foreground="{StaticResource TextMutedBrush}"
                                                        FontSize="11" FontStyle="Italic" Margin="0 2 0 0"/>
+                                            <TextBlock Text="{Binding CodeText}" Foreground="{StaticResource AccentBrush}"
+                                                       FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0 3 0 0"/>
                                         </StackPanel>
                                         <Button Grid.Column="2" Style="{StaticResource IconBtn}" Content="Zurückziehen" Padding="10 7"
                                                 VerticalAlignment="Center"

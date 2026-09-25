@@ -22,6 +22,7 @@ namespace EncryptedMessenger.Core.IPC
         AcceptContactRequest  = 11,
         DeclineContactRequest = 12,
         CancelContactRequest  = 13, // withdraw our own pending request (local only)
+        MarkVerified          = 14, // user compared the verification code: MarkVerifiedPayload
 
         // Service → UI
         NewIncomingMessage = 100,
@@ -73,8 +74,14 @@ namespace EncryptedMessenger.Core.IPC
 
     public record AddNearbyPeerPayload(string PeerId);
 
-    /// <summary>A pending contact request. <paramref name="Incoming"/>: they asked us (true) or we asked them (false).</summary>
-    public record ContactRequestPayload(string ContactId, string DisplayName, string IpAddress, bool Incoming);
+    /// <summary>
+    /// A pending contact request. <paramref name="Incoming"/>: they asked us (true) or we asked them (false).
+    /// <paramref name="VerificationCode"/>: null until a handshake pinned their key (e.g. a request still waiting to be delivered).
+    /// </summary>
+    public record ContactRequestPayload(string ContactId, string DisplayName, string IpAddress, bool Incoming, string? VerificationCode = null);
+
+    /// <summary>UI → service: the user compared <paramref name="VerificationCode"/> with the contact and it matched.</summary>
+    public record MarkVerifiedPayload(string ContactId, string VerificationCode);
 
     /// <summary>Accept / decline / cancel a request for this contact.</summary>
     public record ContactIdPayload(string ContactId);
@@ -95,8 +102,9 @@ namespace EncryptedMessenger.Core.IPC
     /// <paramref name="ViaContactId"/>: set when the refused connection was opened for a
     /// different local contact id (a manual "manual_ip_port" contact), so the UI can show
     /// the warning in that chat even though the peer identified itself as ContactId.
+    /// <paramref name="VerificationCode"/>: the 40-digit code for this contact (only when the key is trusted, Changed = false).
     /// </summary>
-    public record KeyFingerprintPayload(string ContactId, string Fingerprint, bool Changed, string? ViaContactId = null);
+    public record KeyFingerprintPayload(string ContactId, string Fingerprint, bool Changed, string? ViaContactId = null, string? VerificationCode = null);
 
     /// <summary>
     /// UI → service: the user compared <paramref name="Fingerprint"/> with the contact and

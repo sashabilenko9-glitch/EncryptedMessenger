@@ -100,5 +100,10 @@ namespace EncryptedMessenger.WPF.ViewModels
         public string IpAddress { get; } = request.IpAddress;
         public string FirstLetter { get; } =
             string.IsNullOrEmpty(request.DisplayName) ? "?" : request.DisplayName[0].ToString().ToUpper();
+
+        /// <summary>Line under the name: the code to compare, or why there is none yet.</summary>
+        public string CodeText { get; } = request.VerificationCode is { } code
+            ? $"Sicherheitscode: {code}"
+            : "Sicherheitscode nach der ersten Verbindung";
     }
 }

@@ -85,6 +85,25 @@ namespace EncryptedMessenger.WPF.ViewModels
         // manual contact whose address was answered by a peer with a different real id.
         private string _pendingKeyContactId = string.Empty;
 
+        private string _verificationCode = string.Empty;
+        /// <summary>40-digit code (20 digits per public key); the contact sees the same one unless someone is in between.</summary>
+        public string VerificationCode
+        {
+            get => _verificationCode;
+            private set { SetField(ref _verificationCode, value); OnPropertyChanged(nameof(CanVerify)); }
+        }
+
+        private bool _isVerified;
+        /// <summary>The user confirmed the code matches (for the currently pinned key).</summary>
+        public bool IsVerified
+        {
+            get => _isVerified;
+            private set { SetField(ref _isVerified, value); OnPropertyChanged(nameof(CanVerify)); }
+        }
+
+        /// <summary>Show the "Code prüfen" button: there is a code and it hasn't been confirmed yet.</summary>
+        public bool CanVerify => !IsVerified && !string.IsNullOrEmpty(VerificationCode);
+
         // ── Messages ──────────────────────────────────────────────────────
         public ObservableCollection<MessageViewModel> Messages { get; } = [];
 
@@ -120,6 +139,7 @@ namespace EncryptedMessenger.WPF.ViewModels
         // ── Commands ──────────────────────────────────────────────────────
         public AsyncRelayCommand SendCommand { get; }
         public AsyncRelayCommand AcceptKeyCommand { get; }
+        public AsyncRelayCommand VerifyCommand { get; }
         public RelayCommand InsertEmojiCommand { get; }
 
         /// <summary>Small set of emoji for the quick-insert panel.</summary>
@@ -143,6 +163,8 @@ namespace EncryptedMessenger.WPF.ViewModels
                 _ => !IsDraftEmpty && !IsSending && !KeyChanged);
 
             AcceptKeyCommand = new AsyncRelayCommand(_ => AcceptNewKeyAsync(), _ => KeyChanged);
+            VerifyCommand = new AsyncRelayCommand(_ => VerifyCodeAsync(), _ => CanVerify);
+            _isVerified = contact.Verified;
 
             InsertEmojiCommand = new RelayCommand(e =>
             {
@@ -178,8 +200,13 @@ namespace EncryptedMessenger.WPF.ViewModels
 
         /// <summary>Called by MainViewModel when the service reports the peer's key fingerprint after a handshake.</summary>
         /// <param name="peerId">Id the fingerprint belongs to (may differ from ContactId for a manual contact).</param>
-        public void SetKeyFingerprint(string peerId, string fingerprint, bool changed)
+        public void SetKeyFingerprint(string peerId, string fingerprint, bool changed, string? verificationCode = null)
         {
+            // A different key means a different code; the old confirmation no longer applies
+            // (the service resets Verified in the database when a new key is pinned).
+            if (changed) { VerificationCode = string.Empty; IsVerified = false; }
+            else if (verificationCode != null) VerificationCode = verificationCode;
+
             if (changed)
             {
                 // Keep Fingerprint = the trusted key; the new one goes to PendingFingerprint.
@@ -196,6 +223,37 @@ namespace EncryptedMessenger.WPF.ViewModels
                 KeyChanged = false;
             }
             SendCommand.RaiseCanExecuteChanged();
+        }
+
+        /// <summary>Called by MainViewModel when the contact list arrives with this contact's Verified flag.</summary>
+        public void SetVerified(bool verified) => IsVerified = verified;
+
+        /// <summary>
+        /// Asks the user to compare the code with the contact over another channel. Only an
+        /// explicit "Ja" marks it verified, and the code shown is sent along, so the service
+        /// refuses it if the key (and thus the code) changed in the meantime.
+        /// </summary>
+        private async Task VerifyCodeAsync()
+        {
+            var code = VerificationCode;
+            var answer = MessageBox.Show(
+                $"Vergleichen Sie diesen Sicherheitscode mit {ContactName} – am Telefon oder persönlich, " +
+                "nicht über diesen Chat:\n\n" +
+                $"      {code}\n\n" +
+                "Sieht Ihr Kontakt auf seinem Gerät genau denselben Code?",
+                "Sicherheitscode prüfen",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes) return;
+
+            try
+            {
+                await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.MarkVerified,
+                    new MarkVerifiedPayload(_contact.Id, code)));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Mark-verified request failed for {ContactId}", _contact.Id);
+            }
         }
 
         /// <summary>

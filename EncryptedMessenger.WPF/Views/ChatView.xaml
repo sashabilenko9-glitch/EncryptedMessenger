@@ -75,6 +75,28 @@
                                        Foreground="#FF8080"
                                        FontSize="10"/>
                         </Border>
+                        <!-- Verified: the user compared the 40-digit code with the contact -->
+                        <Border Background="#163A22"
+                                CornerRadius="4"
+                                Padding="6 2"
+                                Margin="6 0 0 0"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding IsVerified, Converter={StaticResource BoolToVis}}"
+                                ToolTip="{Binding VerificationCode, StringFormat='Sicherheitscode {0} wurde mit dem Kontakt verglichen'}">
+                            <TextBlock Text="✓ Überprüft"
+                                       Foreground="{StaticResource OnlineBrush}"
+                                       FontSize="10"/>
+                        </Border>
+                        <!-- Not verified yet: opens the compare dialog -->
+                        <Button Style="{StaticResource IconBtn}"
+                                Content="Code prüfen"
+                                FontSize="10"
+                                Padding="6 2"
+                                Margin="6 0 0 0"
+                                VerticalAlignment="Center"
+                                Command="{Binding VerifyCommand}"
+                                Visibility="{Binding CanVerify, Converter={StaticResource BoolToVis}}"
+                                ToolTip="{Binding VerificationCode, StringFormat='Sicherheitscode: {0}'}"/>
                     </StackPanel>
                     <TextBlock Text="{Binding StatusText}"
                                FontSize="12"

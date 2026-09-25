@@ -34,7 +34,11 @@ namespace EncryptedMessenger.Core.Models
         /// </summary>
         public ContactState State { get; set; } = ContactState.Stranger;
 
-        /// <summary>True once both users confirmed that their verification codes match.</summary>
+        /// <summary>
+        /// True once our user confirmed that the verification code matches the one the contact
+        /// sees (each side marks this independently). Bound to <see cref="PublicKeyXml"/>:
+        /// re-pinning a different key resets it.
+        /// </summary>
         public bool Verified { get; set; }
 
         /// <summary>Name used for a contact we only know by id (first 8 chars), until discovery or the user provides a real one.</summary>

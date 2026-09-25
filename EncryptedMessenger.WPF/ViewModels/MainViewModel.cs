@@ -175,7 +175,7 @@ namespace EncryptedMessenger.WPF.ViewModels
                         var fp = msg.Deserialize<KeyFingerprintPayload>();
                         if (ActiveChat != null
                             && (ActiveChat.ContactId == fp.ContactId || ActiveChat.ContactId == fp.ViaContactId))
-                            ActiveChat.SetKeyFingerprint(fp.ContactId, fp.Fingerprint, fp.Changed);
+                            ActiveChat.SetKeyFingerprint(fp.ContactId, fp.Fingerprint, fp.Changed, fp.VerificationCode);
                         break;
                 }
             });
@@ -203,6 +203,10 @@ namespace EncryptedMessenger.WPF.ViewModels
                     vm.LastMessagePreview = old.LastMessagePreview;
                 }
                 Contacts.Add(vm);
+
+                // The open chat keeps its own Contact object; push the fresh Verified flag into it.
+                if (ActiveChat?.ContactId == c.Id)
+                    ActiveChat.SetVerified(c.Verified);
             }
 
             // Restore the highlight without going through the setter, which would reopen the chat.
