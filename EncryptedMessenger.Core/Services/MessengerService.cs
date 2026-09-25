@@ -37,7 +37,8 @@ namespace EncryptedMessenger.Core.Services
 
         private readonly CancellationTokenSource _cts = new();
 
-        public MessengerService(AppSettings? settings = null, ILoggerFactory? loggerFactory = null)
+        /// <param name="pipeName">UI pipe name; defaults to <see cref="PipeServer.PipeName"/>. Tests use a unique one.</param>
+        public MessengerService(AppSettings? settings = null, ILoggerFactory? loggerFactory = null, string pipeName = PipeServer.PipeName)
         {
             _settings = settings ?? AppSettings.Load();
             _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
@@ -56,7 +57,7 @@ namespace EncryptedMessenger.Core.Services
                 _settings.UdpPort, _settings.UserId, _settings.DisplayName, _settings.TcpPort,
                 _loggerFactory.CreateLogger<PeerDiscovery>());
 
-            _pipeServer = new PipeServer(_loggerFactory.CreateLogger<PipeServer>());
+            _pipeServer = new PipeServer(_loggerFactory.CreateLogger<PipeServer>(), pipeName);
 
             _server.MessageReceived += OnMessageReceived;
             _server.ContactConnected += OnContactConnected;

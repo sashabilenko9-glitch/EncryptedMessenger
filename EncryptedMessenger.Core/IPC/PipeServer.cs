@@ -29,9 +29,13 @@ namespace EncryptedMessenger.Core.IPC
         // broadcast writes at a time.
         private readonly SemaphoreSlim _broadcastLock = new(1, 1);
 
-        public PipeServer(ILogger? logger = null)
+        private readonly string _pipeName;
+
+        /// <param name="pipeName">Defaults to <see cref="PipeName"/>; tests pass a unique name so they can't reach a running app.</param>
+        public PipeServer(ILogger? logger = null, string pipeName = PipeName)
         {
             _logger = logger ?? NullLogger.Instance;
+            _pipeName = pipeName;
         }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
@@ -50,7 +54,7 @@ namespace EncryptedMessenger.Core.IPC
                 // Without it Windows' default pipe ACL lets other accounts on the machine
                 // connect and read our broadcasts — which contain decrypted message text.
                 var pipe = new NamedPipeServerStream(
-                    PipeName,
+                    _pipeName,
                     PipeDirection.InOut,
                     NamedPipeServerStream.MaxAllowedServerInstances,
                     PipeTransmissionMode.Message,

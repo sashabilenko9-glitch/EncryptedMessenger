@@ -80,6 +80,14 @@ dotnet run --project EncryptedMessenger.WPF
 
 Or open `EncryptedMessenger.slnx` in Visual Studio and run the **EncryptedMessenger.WPF** project.
 
+### Tests
+
+```bash
+dotnet test EncryptedMessenger.Tests
+```
+
+About 45 xUnit tests (~15 s): crypto, verification code, settings, repositories against real SQLite (including upgrading an old-schema database), presence, TCP handshake/consent on localhost, and end-to-end scenarios against a real `MessengerService` driven through its pipe (contact requests, impostor with a different key, read-receipt retry, verification). They run on Windows only (DPAPI) and use a unique pipe name and free ports, so they don't interfere with a running copy of the app.
+
 To test messaging, run one instance on each of two PCs (or a PC and a VM) on the same network. Two instances on the *same* machine don't work as separate peers: the UI↔service named pipe has a fixed name, so a second launch attaches as another UI to the first instance's service instead of starting its own.
 
 ### Publish a standalone .exe

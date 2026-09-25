@@ -2,6 +2,21 @@
 
 ## Progress log
 
+- **2026-09-25 — P1.7 done: regression test suite (xUnit, 45 tests, ~15 s).** New `EncryptedMessenger.Tests` project (in the solution; `dotnet test EncryptedMessenger.Tests`), consolidating the ad-hoc verification harnesses used for every change so far. Coverage:
+  - **Crypto:** AES-GCM round trip and tamper detection, storage encryption with fresh nonces, session-key exchange, DPAPI-protected key file, undecryptable key left untouched, legacy plaintext migration.
+  - **Verification code:** symmetry, format, differing codes under MITM, and the fixed-20-digit property.
+  - **AppSettings:** persisted UserId, corrupt file backup.
+  - **PresenceTracker:** timeout, connection ref-counting.
+  - **Repositories on real SQLite:** newest-50 history paging, pending read acks, discovery never creating contacts and suppressing writes, address fill-in without overwrite, TOFU pinning, request state machine incl. mutual requests and compare-and-set, verification bound to the key, old-schema database upgrade.
+  - **TCP on localhost:** parallel connections with independent session keys, ReadAck, peer IP, no unpaired disconnect, key rejection on both sides, consent.
+  - **End-to-end on a real `MessengerService` through its pipe:** stranger refused until accepted, request by IP, unsolicited Accept ignored, decline, nearby, request to an offline peer delivered later, impostor refused, and only the displayed key can be accepted; ReadAck retry across a reconnect; verification codes equal on both sides.
+
+  Test-parallelisation is off (the service uses the process-wide working directory). For testability, `PipeServer`/`PipeClient`/`MessengerService` take an optional pipe name (default unchanged), so tests can't connect to a running copy of the app; tests use free ports.
+
+  Verified: 5 consecutive green runs. A deliberately broken consent check was caught by `StrangersMessage_IsRefused_UntilTheirRequestIsAccepted`. Two tests initially assumed the impostor's own handshake always completes; it can race with Bob hanging up. Both outcomes are safe, so the tests now accept either.
+
+  Not covered: WPF views/view models, the Windows Service host, nearby-list expiry (needs a 15 s wait; the underlying `PresenceTracker` timeout is covered).
+
 - **2026-09-25 — Contact requests, stage 3/3: verification code.** New `VerificationCode.Compute(keyA, keyB)`, the same construction as Signal's safety number, shorter:
   - Each public key gets its own 20 digits: SHA-256 over a domain-separation prefix (`EncryptedMessenger/verification-code/v1`) plus the key, first 16 bytes as a 128-bit number mod 10²⁰ (modulo bias negligible).
   - The code is both halves in sorted order, shown as 8 groups of 5 digits, so both sides see the same code.
@@ -83,7 +98,7 @@ Grounded in actual counts from the codebase, not guesses:
 4. ✅ **DONE — Peer key fingerprint verification.** SHA-256 fingerprint shown in the chat header (tooltip), computed on both sides after every handshake and compared against the previously stored key per contact; a mismatch logs a `SECURITY:` warning and shows a red "key changed" badge in the UI. Still manual (no QR yet — see ideas below) and doesn't block the connection on mismatch, only flags it.
 5. ✅ **DONE — AES-GCM instead of AES-CBC.** `AesCryptoService` rewritten to AES-256-GCM; tampering now makes decryption throw instead of silently returning corrupted plaintext. Also fixed session-IV reuse (was safe-ish under CBC, would've been a critical break under GCM) by moving to a fresh nonce per message.
 6. ✅ **DONE — Encrypt the RSA private key at rest.** Both the RSA private key and the at-rest storage key are now DPAPI-protected (`CurrentUser` scope) via `DpapiProtectedFile`, with a one-time transparent migration for files left over from before this change.
-7. **Unit tests (xUnit).** Zero tests exist today. Cover: RSA/AES round-trip, packet serialization, `MessageRepository.ConversationId`, and an integration test of a full client↔server handshake + message on localhost. Do this once Priority 2's DI/interfaces land — it's much easier to test with mockable repositories.
+7. ✅ **DONE — Tests (xUnit).** `EncryptedMessenger.Tests`, 45 tests. Done without the DI/interfaces refactor: the repositories are tested against real temporary SQLite files and the service end-to-end through its pipe, which covers more real behaviour than mocks would. See Progress log.
 
 ## Priority 2 — valuable, not urgent
 

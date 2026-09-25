@@ -22,9 +22,13 @@ namespace EncryptedMessenger.Core.IPC
 
         public bool IsConnected => _pipe?.IsConnected ?? false;
 
-        public PipeClient(ILogger? logger = null)
+        private readonly string _pipeName;
+
+        /// <param name="pipeName">Defaults to <see cref="PipeServer.PipeName"/>; tests pass a unique name so they can't reach a running app.</param>
+        public PipeClient(ILogger? logger = null, string pipeName = PipeServer.PipeName)
         {
             _logger = logger ?? NullLogger.Instance;
+            _pipeName = pipeName;
         }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
@@ -46,7 +50,7 @@ namespace EncryptedMessenger.Core.IPC
                     // stops another account's process that grabbed our pipe name first from
                     // receiving our plaintext messages ("pipe squatting").
                     _pipe = new NamedPipeClientStream(
-                        ".", PipeServer.PipeName,
+                        ".", _pipeName,
                         PipeDirection.InOut,
                         PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
@@ -61,7 +65,7 @@ namespace EncryptedMessenger.Core.IPC
                 catch (UnauthorizedAccessException ex)
                 {
                     // Not "service not started yet": something owned by ANOTHER user holds our pipe name.
-                    _logger.LogWarning(ex, "SECURITY: pipe '{PipeName}' is owned by another Windows user – refusing to connect", PipeServer.PipeName);
+                    _logger.LogWarning(ex, "SECURITY: pipe '{PipeName}' is owned by another Windows user – refusing to connect", _pipeName);
                 }
                 catch (Exception ex) { _logger.LogDebug(ex, "Service not reachable yet – retrying"); }
                 finally
