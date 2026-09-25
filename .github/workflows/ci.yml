@@ -1,0 +1,49 @@
+# Continuous integration: build the whole solution and run the test suite on every push
+# and pull request, on a fresh Windows machine provided by GitHub.
+name: CI
+
+on:
+  push:
+    branches: [main, v2-dev]
+  pull_request:
+  workflow_dispatch:        # "Run workflow" button in the Actions tab
+
+# A newer push to the same branch cancels a run that is still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # Windows: WPF, DPAPI and Windows named-pipe security need it.
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # 10.x builds the .slnx solution format; 8.x provides the runtime the net8.0 tests run on.
+      - name: Install .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Restore NuGet packages
+        run: dotnet restore EncryptedMessenger.slnx
+
+      - name: Build
+        run: dotnet build EncryptedMessenger.slnx --no-restore
+
+      - name: Test
+        run: dotnet test EncryptedMessenger.Tests --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+
+      # Keep the detailed test report downloadable from the run page — most useful when a test failed.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
