@@ -14,7 +14,7 @@ A serverless, end-to-end encrypted peer-to-peer messenger for the local network 
 - **Persistent history** — contacts and messages stored locally with Entity Framework Core + SQLite.
 - **Background Windows Service** that keeps receiving messages even when the UI is closed (optional; the app also runs standalone).
 - **WPF desktop UI** built with the MVVM pattern (contacts list, chat view with emojis, settings).
-- **Delivery / read receipts** and online/offline status.
+- **Delivery / read receipts** (✓ sent, ✓✓ delivered, blue ✓✓ read, ✗ failed) and online/offline status.
 
 ## Architecture
 
@@ -41,7 +41,7 @@ The UI and the service communicate over a **named pipe** (JSON messages). If no 
 ## Security model
 
 - Each instance generates an **RSA-2048** key pair on first run; the private key is **DPAPI-protected** on disk (only readable by that Windows account on that machine) and never leaves it.
-- For every session a random **AES-256** key is generated, encrypted with the peer's public RSA key (**RSA-OAEP with SHA-256**) and sent over.
+- For every TCP connection a random **AES-256** key is generated, encrypted with the peer's public RSA key (**RSA-OAEP with SHA-256**) and sent over. Each connection keeps its own key, and incoming messages are attributed to the identity from that connection's handshake, not to a sender ID claimed inside a packet.
 - Messages are encrypted with **AES-256-GCM** (authenticated encryption) using that session key, with a fresh random nonce per message — tampering with a message in transit causes decryption to fail rather than silently returning corrupted data.
 - Local chat history is separately encrypted at rest with a persistent per-install AES-256-GCM key, independent of the per-session keys.
 - After each handshake, both sides can see a **SHA-256 fingerprint** of the peer's public key (shown in the chat header) to manually verify out-of-band that no one substituted a different key. If a contact's key ever changes from what was seen before, the app flags it in the UI.
@@ -77,7 +77,7 @@ dotnet run --project EncryptedMessenger.WPF
 
 Or open `EncryptedMessenger.slnx` in Visual Studio and run the **EncryptedMessenger.WPF** project.
 
-To test on a single machine, start two instances with different ports (see Settings).
+To test messaging, run one instance on each of two PCs (or a PC and a VM) on the same network. Two instances on the *same* machine don't work as separate peers: the UI↔service named pipe has a fixed name, so a second launch attaches as another UI to the first instance's service instead of starting its own.
 
 ### Publish a standalone .exe
 
@@ -91,17 +91,23 @@ Produces a single self-contained `EncryptedMessenger.exe` (in `EncryptedMessenge
 
 ```bash
 dotnet publish EncryptedMessenger.WindowsService -c Release
-sc create EncryptedMessenger binPath= "C:\path\EncryptedMessenger.Service.exe"
+sc create EncryptedMessenger binPath= "C:\path\EncryptedMessenger.Service.exe" obj= ".\YourWindowsUser" password= "..."
 sc start EncryptedMessenger
 ```
 
+Run the service under **your own Windows account** (`obj=`), not the default LocalSystem: the keys are DPAPI-protected per Windows user, so a service running as a different account cannot read keys created by the app (it fails with an explicit error and leaves the key files untouched).
+
 ## Configuration & data
 
-All paths are **relative** (`./data/`). On first run the app creates:
+All data lives in a `data/` folder **next to the executable** (the app and the service set their working directory to the exe folder at startup, so it doesn't matter where they're launched from). On first run the app creates:
 
-- `./data/messenger.db` — the SQLite database (auto-created via EF Core)
-- `./data/settings.json` — display name, TCP/UDP ports, discovery toggle
-- the private RSA key file
+- `data/settings.json` — your persistent user ID, display name, TCP/UDP ports, discovery toggle (a corrupt file is kept as `settings.json.corrupt` and replaced with defaults)
+- `data/messenger.db` — the SQLite database (auto-created via EF Core)
+- `data/private.key` — the RSA private key (DPAPI-protected)
+- `data/storage.key` — the at-rest history key (DPAPI-protected)
+- `data/logs/` — daily rolling log files
+
+The user ID in `settings.json` is your identity towards peers — keep the file (and the keys) when moving or updating the app.
 
 No installation or database server is required — external libraries are restored automatically from NuGet.
 

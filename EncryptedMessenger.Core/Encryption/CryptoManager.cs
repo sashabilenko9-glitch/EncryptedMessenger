@@ -21,7 +21,7 @@ namespace EncryptedMessenger.Core.Encryption
     ///       a. Gets own public key → transmit as KeyExchange packet.
     ///       b. Receives peer's public key (stored in Contact.PublicKeyXml).
     ///       c. DecryptAndStoreSessionKey() to decode the AES key.
-    ///  5. Messaging: EncryptMessage() / DecryptMessage() per contactId.
+    ///  5. Messaging: EncryptMessage() / DecryptMessage() per sessionId (one per connection).
     ///     Every call uses a fresh random nonce (never a fixed per-session IV) —
     ///     required for AES-GCM's security guarantees to hold.
     /// </summary>
@@ -30,7 +30,12 @@ namespace EncryptedMessenger.Core.Encryption
         private readonly RsaCryptoService _rsa;
         private readonly byte[] _storageKey;
 
-        /// <summary>Maps contactId → AES session key.</summary>
+        /// <summary>
+        /// Maps sessionId → AES session key. A sessionId identifies ONE TCP connection
+        /// (see <see cref="NewSessionId"/>), not a contact: the same contact may have an
+        /// inbound and an outbound connection at once, each with its own key, and closing
+        /// one must not remove the key the other is still using.
+        /// </summary>
         private readonly ConcurrentDictionary<string, SessionKey> _sessions = new();
 
         public string PublicKeyXml => _rsa.GetPublicKeyXml();
@@ -56,7 +61,8 @@ namespace EncryptedMessenger.Core.Encryption
 
             if (File.Exists(privateKeyPath))
             {
-                var privateKeyXml = DpapiProtectedFile.ReadText(privateKeyPath);
+                var privateKeyXml = DpapiProtectedFile.ReadText(privateKeyPath,
+                    text => text.TrimStart().StartsWith("<RSAKeyValue>", StringComparison.Ordinal));
                 _rsa = new RsaCryptoService(privateKeyXml);
             }
             else
@@ -68,7 +74,7 @@ namespace EncryptedMessenger.Core.Encryption
             storageKeyPath ??= privateKeyPath + ".storage";
             if (File.Exists(storageKeyPath))
             {
-                _storageKey = Convert.FromBase64String(DpapiProtectedFile.ReadText(storageKeyPath));
+                _storageKey = Convert.FromBase64String(DpapiProtectedFile.ReadText(storageKeyPath, IsBase64AesKey));
             }
             else
             {
@@ -84,10 +90,10 @@ namespace EncryptedMessenger.Core.Encryption
         /// with the peer's RSA public key. Returns the Base64-encoded blob to
         /// be sent as the SessionKey packet payload.
         /// </summary>
-        public string CreateAndEncryptSessionKey(string contactId, string peerPublicKeyXml)
+        public string CreateAndEncryptSessionKey(string sessionId, string peerPublicKeyXml)
         {
             var key = AesCryptoService.GenerateKey();
-            _sessions[contactId] = new SessionKey(key);
+            _sessions[sessionId] = new SessionKey(key);
 
             return Convert.ToBase64String(_rsa.EncryptWithPublicKey(key, peerPublicKeyXml));
         }
@@ -96,10 +102,10 @@ namespace EncryptedMessenger.Core.Encryption
         /// Acceptor side: RSA-decrypts the session key received from the
         /// initiating peer and stores it locally.
         /// </summary>
-        public void DecryptAndStoreSessionKey(string contactId, string encryptedBase64)
+        public void DecryptAndStoreSessionKey(string sessionId, string encryptedBase64)
         {
             var key = _rsa.DecryptWithPrivateKey(Convert.FromBase64String(encryptedBase64));
-            _sessions[contactId] = new SessionKey(key);
+            _sessions[sessionId] = new SessionKey(key);
         }
 
         // ── Message crypto ────────────────────────────────────────────────
@@ -108,9 +114,9 @@ namespace EncryptedMessenger.Core.Encryption
         /// AES-GCM-encrypts <paramref name="plainText"/> with a fresh random nonce;
         /// returns Base64 of nonce + ciphertext + auth tag.
         /// </summary>
-        public string EncryptMessage(string plainText, string contactId)
+        public string EncryptMessage(string plainText, string sessionId)
         {
-            var s = GetSession(contactId);
+            var s = GetSession(sessionId);
             return EncryptWithKey(plainText, s.Key);
         }
 
@@ -118,9 +124,9 @@ namespace EncryptedMessenger.Core.Encryption
         /// AES-GCM-decrypts a Base64 blob produced by <see cref="EncryptMessage"/>.
         /// Throws if the peer's key doesn't match or the data was tampered with.
         /// </summary>
-        public string DecryptMessage(string encryptedBase64, string contactId)
+        public string DecryptMessage(string encryptedBase64, string sessionId)
         {
-            var s = GetSession(contactId);
+            var s = GetSession(sessionId);
             return DecryptWithKey(encryptedBase64, s.Key);
         }
 
@@ -134,14 +140,17 @@ namespace EncryptedMessenger.Core.Encryption
 
         // ── Helpers ───────────────────────────────────────────────────────
 
-        public bool HasSession(string contactId) => _sessions.ContainsKey(contactId);
-        public void RemoveSession(string contactId) => _sessions.TryRemove(contactId, out _);
+        /// <summary>Creates a unique id for the session key of a single connection with <paramref name="contactId"/>.</summary>
+        public static string NewSessionId(string contactId) => $"{contactId}#{Guid.NewGuid():N}";
 
-        private SessionKey GetSession(string contactId)
+        public bool HasSession(string sessionId) => _sessions.ContainsKey(sessionId);
+        public void RemoveSession(string sessionId) => _sessions.TryRemove(sessionId, out _);
+
+        private SessionKey GetSession(string sessionId)
         {
-            if (_sessions.TryGetValue(contactId, out var s)) return s;
+            if (_sessions.TryGetValue(sessionId, out var s)) return s;
             throw new InvalidOperationException(
-                $"No AES session established for contact '{contactId}'. " +
+                $"No AES session '{sessionId}'. " +
                 "Complete the RSA key-exchange handshake first.");
         }
 
@@ -163,6 +172,13 @@ namespace EncryptedMessenger.Core.Encryption
             var nonce = blob[..AesCryptoService.NonceSizeBytes];
             var cipherAndTag = blob[AesCryptoService.NonceSizeBytes..];
             return AesCryptoService.Decrypt(cipherAndTag, key, nonce);
+        }
+
+        /// <summary>Legacy (pre-DPAPI) storage key file format: Base64 of a 32-byte AES key.</summary>
+        private static bool IsBase64AesKey(string text)
+        {
+            var buffer = new byte[64];
+            return Convert.TryFromBase64String(text.Trim(), buffer, out var written) && written == 32;
         }
 
         public void Dispose() => _rsa.Dispose();

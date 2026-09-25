@@ -22,6 +22,7 @@ namespace EncryptedMessenger.Core.Network
         private TcpClient? _tcp;
         private NetworkStream? _stream;
         private CancellationTokenSource _cts = new();
+        private string _sessionId = string.Empty;
 
         public string ContactId { get; private set; } = string.Empty;
         public string PeerPublicKeyXml { get; private set; } = string.Empty;
@@ -83,7 +84,8 @@ namespace EncryptedMessenger.Core.Network
             }, ct);
 
             // 3. Create AES session key and send it encrypted
-            var encryptedSessionKey = _crypto.CreateAndEncryptSessionKey(ContactId, peerPublicKey);
+            _sessionId = CryptoManager.NewSessionId(ContactId);
+            var encryptedSessionKey = _crypto.CreateAndEncryptSessionKey(_sessionId, peerPublicKey);
             await PacketHelper.SendAsync(_stream, new NetworkPacket
             {
                 Type = PacketType.SessionKey,
@@ -100,7 +102,7 @@ namespace EncryptedMessenger.Core.Network
         {
             if (_stream == null) throw new InvalidOperationException("Not connected.");
 
-            var encrypted = _crypto.EncryptMessage(plainText, ContactId);
+            var encrypted = _crypto.EncryptMessage(plainText, _sessionId);
             await PacketHelper.SendAsync(_stream, new NetworkPacket
             {
                 Type = PacketType.Message,
@@ -146,15 +148,17 @@ namespace EncryptedMessenger.Core.Network
                     switch (pkt.Type)
                     {
                         case PacketType.Message:
-                            var plain = _crypto.DecryptMessage(pkt.Payload, pkt.SenderId);
+                            // Attribute to the handshake identity, never to the self-declared SenderId.
+                            var plain = _crypto.DecryptMessage(pkt.Payload, _sessionId);
                             MessageReceived?.Invoke(this, new MessageReceivedEventArgs(
-                                pkt.SenderId, plain, pkt.MessageId ?? string.Empty, pkt.Timestamp));
+                                ContactId, plain, pkt.MessageId ?? string.Empty, pkt.Timestamp));
                             break;
 
                         case PacketType.DeliveryAck:
                         case PacketType.ReadAck:
                             if (pkt.MessageId != null)
-                                DeliveryAcknowledged?.Invoke(this, new DeliveryAckEventArgs(pkt.MessageId));
+                                DeliveryAcknowledged?.Invoke(this, new DeliveryAckEventArgs(
+                                    pkt.MessageId, isRead: pkt.Type == PacketType.ReadAck));
                             break;
 
                         case PacketType.Disconnect:
@@ -166,7 +170,7 @@ namespace EncryptedMessenger.Core.Network
             catch (Exception ex) { _logger.LogWarning(ex, "Receive loop error for {ContactId}", ContactId); }
 
         exit:
-            _crypto.RemoveSession(ContactId);
+            _crypto.RemoveSession(_sessionId);
             Disconnected?.Invoke(this, EventArgs.Empty);
         }
 

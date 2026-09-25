@@ -35,6 +35,9 @@ namespace EncryptedMessenger.Core.Database
 
         // ── Read ──────────────────────────────────────────────────────────
 
+        public Task<Message?> GetByMessageIdAsync(string messageId)
+            => db.RunAsync(d => d.Messages.FirstOrDefaultAsync(m => m.MessageId == messageId));
+
         /// <summary>Returns all messages for a conversation, oldest first.</summary>
         public Task<List<Message>> GetByConversationAsync(string conversationId, int skip = 0, int take = 50)
             => db.RunAsync(d => d.Messages

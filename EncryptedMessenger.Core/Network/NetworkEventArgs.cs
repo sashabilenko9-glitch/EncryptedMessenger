@@ -25,8 +25,11 @@ namespace EncryptedMessenger.Core.Network
         public int    Port        { get; } = port;
     }
 
-    public class DeliveryAckEventArgs(string messageId) : EventArgs
+    public class DeliveryAckEventArgs(string messageId, bool isRead = false) : EventArgs
     {
         public string MessageId { get; } = messageId;
+
+        /// <summary>true = the peer's user has read the message (ReadAck); false = it reached the peer (DeliveryAck).</summary>
+        public bool IsRead { get; } = isRead;
     }
 }

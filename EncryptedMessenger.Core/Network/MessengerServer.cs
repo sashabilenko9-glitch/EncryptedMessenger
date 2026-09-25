@@ -29,6 +29,11 @@ namespace EncryptedMessenger.Core.Network
         private readonly Dictionary<string, NetworkStream> _activeStreams = new();
         private readonly object _streamsLock = new();
 
+        // Acks are written both from a connection's receive loop (DeliveryAck) and from
+        // SendReadAckAsync (ReadAck). A frame is two writes (length + body), so concurrent
+        // writers could interleave and corrupt the stream — serialise all server writes.
+        private readonly SemaphoreSlim _writeLock = new(1, 1);
+
         public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null)
         {
             _port = port;
@@ -97,6 +102,7 @@ namespace EncryptedMessenger.Core.Network
         private async Task HandleClientAsync(TcpClient client, CancellationToken ct)
         {
             string? contactId = null;
+            string? sessionId = null;
             var stream = client.GetStream();
 
             try
@@ -129,7 +135,8 @@ namespace EncryptedMessenger.Core.Network
                     _logger.LogWarning("Handshake abort: expected SessionKey, got {PacketType}", skPkt?.Type.ToString() ?? "null");
                     return;
                 }
-                _crypto.DecryptAndStoreSessionKey(contactId, skPkt.Payload);
+                sessionId = CryptoManager.NewSessionId(contactId);
+                _crypto.DecryptAndStoreSessionKey(sessionId, skPkt.Payload);
                 _logger.LogInformation("Handshake complete with {ContactId}", Short(contactId));
 
                 lock (_streamsLock) _activeStreams[contactId] = stream;
@@ -140,7 +147,7 @@ namespace EncryptedMessenger.Core.Network
                 {
                     var pkt = await PacketHelper.ReceiveAsync(stream, ct);
                     if (pkt == null) { _logger.LogInformation("Peer closed stream ({ContactId})", Short(contactId)); break; }
-                    await ProcessPacketAsync(pkt, stream, ct);
+                    await ProcessPacketAsync(pkt, contactId, sessionId, stream, ct);
                 }
             }
             catch (OperationCanceledException) { }
@@ -153,8 +160,14 @@ namespace EncryptedMessenger.Core.Network
                 client.Close();
                 if (contactId != null)
                 {
-                    lock (_streamsLock) _activeStreams.Remove(contactId);
-                    _crypto.RemoveSession(contactId);
+                    // Only drop the stream entry if it is still ours — a newer connection from the
+                    // same contact may already have replaced it.
+                    lock (_streamsLock)
+                    {
+                        if (_activeStreams.TryGetValue(contactId, out var current) && current == stream)
+                            _activeStreams.Remove(contactId);
+                    }
+                    if (sessionId != null) _crypto.RemoveSession(sessionId);
                     ContactDisconnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: false));
                     _logger.LogInformation("Disconnected {ContactId}", Short(contactId));
                 }
@@ -163,17 +176,18 @@ namespace EncryptedMessenger.Core.Network
 
         // ── Packet dispatch ───────────────────────────────────────────────
 
-        private async Task ProcessPacketAsync(NetworkPacket pkt, NetworkStream stream, CancellationToken ct)
+        private async Task ProcessPacketAsync(NetworkPacket pkt, string contactId, string sessionId, NetworkStream stream, CancellationToken ct)
         {
             switch (pkt.Type)
             {
                 case PacketType.Message:
-                    var plain = _crypto.DecryptMessage(pkt.Payload, pkt.SenderId);
-                    _logger.LogInformation("Message received from {ContactId} id={MessageId}", Short(pkt.SenderId), pkt.MessageId);
+                    // Attribute to the handshake identity, never to the self-declared SenderId.
+                    var plain = _crypto.DecryptMessage(pkt.Payload, sessionId);
+                    _logger.LogInformation("Message received from {ContactId} id={MessageId}", Short(contactId), pkt.MessageId);
                     MessageReceived?.Invoke(this, new MessageReceivedEventArgs(
-                        pkt.SenderId, plain, pkt.MessageId ?? string.Empty, pkt.Timestamp));
+                        contactId, plain, pkt.MessageId ?? string.Empty, pkt.Timestamp));
 
-                    await PacketHelper.SendAsync(stream, new NetworkPacket
+                    await SendLockedAsync(stream, new NetworkPacket
                     {
                         Type = PacketType.DeliveryAck,
                         SenderId = _ownId,
@@ -185,7 +199,8 @@ namespace EncryptedMessenger.Core.Network
                 case PacketType.DeliveryAck:
                 case PacketType.ReadAck:
                     if (pkt.MessageId != null)
-                        DeliveryAcknowledged?.Invoke(this, new DeliveryAckEventArgs(pkt.MessageId));
+                        DeliveryAcknowledged?.Invoke(this, new DeliveryAckEventArgs(
+                            pkt.MessageId, isRead: pkt.Type == PacketType.ReadAck));
                     break;
 
                 case PacketType.Disconnect:
@@ -203,7 +218,7 @@ namespace EncryptedMessenger.Core.Network
 
             try
             {
-                await PacketHelper.SendAsync(stream, new NetworkPacket
+                await SendLockedAsync(stream, new NetworkPacket
                 {
                     Type = PacketType.ReadAck,
                     SenderId = _ownId,
@@ -215,6 +230,13 @@ namespace EncryptedMessenger.Core.Network
             {
                 _logger.LogWarning(ex, "Read-ack send failed for {ContactId}", Short(contactId));
             }
+        }
+
+        private async Task SendLockedAsync(NetworkStream stream, NetworkPacket packet, CancellationToken ct = default)
+        {
+            await _writeLock.WaitAsync(ct);
+            try { await PacketHelper.SendAsync(stream, packet, ct); }
+            finally { _writeLock.Release(); }
         }
 
         private static string Short(string id) => id.Length > 8 ? id[..8] : id;

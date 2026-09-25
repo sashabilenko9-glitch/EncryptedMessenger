@@ -30,15 +30,30 @@ namespace EncryptedMessenger.Core.Models
             File.WriteAllText(path, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
         }
 
+        /// <summary>
+        /// Loads settings, creating and immediately saving defaults when no valid file exists.
+        /// Saving on first run is essential: <see cref="UserId"/> is this install's identity
+        /// (conversation IDs, contacts on peers), so it must not be regenerated on every start.
+        /// </summary>
         public static AppSettings Load(string path = SettingsFileName)
         {
-            if (!File.Exists(path)) return new AppSettings();
-            try
+            if (File.Exists(path))
             {
-                var json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                try
+                {
+                    var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path));
+                    if (loaded != null && !string.IsNullOrWhiteSpace(loaded.UserId))
+                        return loaded;
+                }
+                catch (JsonException) { }
+
+                // Corrupt/unusable file: keep a copy for manual recovery instead of silently discarding it.
+                File.Copy(path, path + ".corrupt", overwrite: true);
             }
-            catch { return new AppSettings(); }
+
+            var settings = new AppSettings();
+            settings.Save(path);
+            return settings;
         }
     }
 }

@@ -22,6 +22,10 @@ namespace EncryptedMessenger.WPF
         {
             base.OnStartup(e);
 
+            // All data paths are relative (.\data\...). Anchor them to the exe folder, not to
+            // whatever working directory a shortcut or terminal happened to launch us from.
+            System.IO.Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
             LoggerFactory = AppLogging.CreateLoggerFactory();
             var logger = LoggerFactory.CreateLogger<App>();
 

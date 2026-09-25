@@ -25,6 +25,8 @@ namespace EncryptedMessenger.Core.IPC
         ContactList        = 104,
         MessageHistory     = 105,
         KeyFingerprint     = 106,
+        SendFailed         = 107, // Payload = messageId (string)
+        MessageRead        = 108, // Payload = messageId (string)
 
         // Bidirectional
         Heartbeat        = 200,

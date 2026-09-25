@@ -89,7 +89,7 @@
                     Style="{StaticResource PrimaryBtn}"
                     Width="130"
                     Height="40"
-                    Command="{Binding AddCommand}"
+                    IsEnabled="{Binding IsValid}"
                     Click="OnAddClick"/>
         </StackPanel>
     </Grid>

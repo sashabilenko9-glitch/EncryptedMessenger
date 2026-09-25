@@ -14,8 +14,11 @@ namespace EncryptedMessenger.WPF.Views
             DataContext = ViewModel;
         }
 
+        // Not bound via Command="...": WPF raises Click BEFORE executing the Command, so the
+        // handler would see Confirmed == false on the first click. Run the command here instead.
         private void OnAddClick(object sender, RoutedEventArgs e)
         {
+            ViewModel.AddCommand.Execute(null);
             if (ViewModel.Confirmed)
             {
                 DialogResult = true;

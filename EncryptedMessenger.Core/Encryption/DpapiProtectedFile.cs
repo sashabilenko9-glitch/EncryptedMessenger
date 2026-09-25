@@ -20,11 +20,16 @@ namespace EncryptedMessenger.Core.Encryption
 
         /// <summary>
         /// Reads a DPAPI-protected file. Transparently migrates a plaintext file left
-        /// over from a pre-DPAPI build: if unprotecting fails, the bytes are read back
-        /// as plain UTF-8 text (the old format) and the file is immediately re-saved
-        /// DPAPI-protected, so this only happens once per file.
+        /// over from a pre-DPAPI build: if unprotecting fails AND the raw bytes pass
+        /// <paramref name="isLegacyPlainText"/>, the file is re-saved DPAPI-protected,
+        /// so this only happens once per file.
+        ///
+        /// If unprotecting fails and the content is NOT a recognisable legacy key, the
+        /// file was protected by another Windows account or machine (copied data folder,
+        /// service running as a different user). It is left untouched — overwriting it
+        /// would destroy the only copy of the key — and an exception is thrown.
         /// </summary>
-        public static string ReadText(string path)
+        public static string ReadText(string path, Func<string, bool> isLegacyPlainText)
         {
             var bytes = File.ReadAllBytes(path);
             try
@@ -32,9 +37,23 @@ namespace EncryptedMessenger.Core.Encryption
                 var plainBytes = ProtectedData.Unprotect(bytes, optionalEntropy: null, DataProtectionScope.CurrentUser);
                 return Encoding.UTF8.GetString(plainBytes);
             }
-            catch (CryptographicException)
+            catch (CryptographicException ex)
             {
-                var legacyPlainText = Encoding.UTF8.GetString(bytes);
+                string legacyPlainText;
+                try
+                {
+                    legacyPlainText = new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+                }
+                catch (DecoderFallbackException)
+                {
+                    legacyPlainText = string.Empty;
+                }
+
+                if (!isLegacyPlainText(legacyPlainText))
+                    throw new CryptographicException(
+                        $"'{path}' cannot be decrypted by the current Windows account. It was probably " +
+                        "created by another user or on another machine. The file was left unchanged.", ex);
+
                 WriteText(path, legacyPlainText);
                 return legacyPlainText;
             }

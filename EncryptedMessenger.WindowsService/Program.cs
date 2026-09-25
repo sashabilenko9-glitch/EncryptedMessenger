@@ -2,6 +2,10 @@ using EncryptedMessenger.Core.Logging;
 using EncryptedMessenger.WindowsService;
 using Serilog;
 
+// A Windows Service starts with C:\Windows\System32 as its working directory; all data
+// paths are relative (.\data\...), so anchor them to the service exe's folder first.
+Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
 var builder = Host.CreateApplicationBuilder(args);
 
 // Register as a Windows Service (ignored when run interactively / in debug)

@@ -143,6 +143,14 @@ namespace EncryptedMessenger.WPF.ViewModels
                         ActiveChat?.MarkDelivered(ackId);
                         break;
 
+                    case PipeMessageType.MessageRead:
+                        ActiveChat?.MarkReadByPeer(msg.Deserialize<string>());
+                        break;
+
+                    case PipeMessageType.SendFailed:
+                        ActiveChat?.MarkFailed(msg.Deserialize<string>());
+                        break;
+
                     case PipeMessageType.MessageHistory:
                         var hist = msg.Deserialize<List<Message>>();
                         ActiveChat?.PopulateHistory(hist);

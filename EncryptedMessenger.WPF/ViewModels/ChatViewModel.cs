@@ -201,7 +201,9 @@ namespace EncryptedMessenger.WPF.ViewModels
             {
                 await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.SendMessage,
                     new SendMessagePayload(_contact.Id, text, msgId)));
-                vm.Status = MessageStatus.Sent;
+                // An ack (or a SendFailed) may already have arrived while we awaited — don't downgrade it.
+                if (vm.Status == MessageStatus.Pending)
+                    vm.Status = MessageStatus.Sent;
             }
             catch (Exception ex)
             {
@@ -236,7 +238,23 @@ namespace EncryptedMessenger.WPF.ViewModels
         public void MarkDelivered(string messageId)
         {
             var vm = Messages.FirstOrDefault(m => m.MessageId == messageId);
-            if (vm != null) vm.Status = MessageStatus.Delivered;
+            if (vm != null && vm.Status is MessageStatus.Pending or MessageStatus.Sent)
+                vm.Status = MessageStatus.Delivered;
+        }
+
+        /// <summary>The peer's user has read our message (ReadAck).</summary>
+        public void MarkReadByPeer(string messageId)
+        {
+            var vm = Messages.FirstOrDefault(m => m.MessageId == messageId);
+            if (vm != null) vm.Status = MessageStatus.Read;
+        }
+
+        /// <summary>The service could not deliver our message (no connection, handshake failed, …).</summary>
+        public void MarkFailed(string messageId)
+        {
+            var vm = Messages.FirstOrDefault(m => m.MessageId == messageId);
+            if (vm != null && vm.Status is MessageStatus.Pending or MessageStatus.Sent)
+                vm.Status = MessageStatus.Failed;
         }
 
         // ── History ───────────────────────────────────────────────────────
@@ -272,6 +290,12 @@ namespace EncryptedMessenger.WPF.ViewModels
                     });
                 IsLoading = false;
             });
+
+            // Messages that arrived while this chat was closed are read now that it is open.
+            var convId = MessageRepository.ConversationId(_ownId, _contact.Id);
+            foreach (var m in messages.Where(m => !m.IsOutgoing && m.Status != MessageStatus.Read))
+                _ = _pipe.SendAsync(PipeMessage.Create(PipeMessageType.MarkRead,
+                    new MarkReadPayload(convId, m.MessageId)));
         }
     }
 

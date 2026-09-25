@@ -67,7 +67,11 @@ namespace EncryptedMessenger.Core.Services
 
         // ── Outbound ─────────────────────────────────────────────────────
 
-        public async Task<Message?> SendMessageAsync(string recipientId, string plainText)
+        /// <param name="messageId">
+        /// Id chosen by the UI for its optimistic bubble. Reusing it end-to-end is what lets
+        /// delivery/read acks find that bubble again. A new id is generated when omitted.
+        /// </param>
+        public async Task<Message?> SendMessageAsync(string recipientId, string plainText, string? messageId = null)
         {
             var contact = await _contactRepo.GetByIdAsync(recipientId);
             if (contact == null) return null;
@@ -81,7 +85,7 @@ namespace EncryptedMessenger.Core.Services
                 var targetId = client.ContactId is { Length: > 0 } realId && realId != recipientId
                                ? realId : recipientId;
 
-                var msgId = Guid.NewGuid().ToString();
+                var msgId = string.IsNullOrEmpty(messageId) ? Guid.NewGuid().ToString() : messageId;
                 await client.SendMessageAsync(plainText, msgId);
 
                 var message = new Message
@@ -147,18 +151,19 @@ namespace EncryptedMessenger.Core.Services
             client.DeliveryAcknowledged += OnDeliveryAcknowledged;
             client.Disconnected += async (_, _) =>
             {
-                await _clientsLock.WaitAsync();
-                _clients.Remove(recipientId);
-                _clientsLock.Release();
                 try
                 {
+                    await _clientsLock.WaitAsync();
+                    _clients.Remove(recipientId);
+                    _clientsLock.Release();
+
                     await _pipeServer.BroadcastAsync(PipeMessage.Create(
                         PipeMessageType.ContactOffline,
                         new ContactStatusPayload(recipientId, false)));
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to broadcast contact-offline for {ContactId}", recipientId);
+                    _logger.LogWarning(ex, "Failed to handle disconnect for {ContactId}", recipientId);
                 }
             };
 
@@ -220,8 +225,39 @@ namespace EncryptedMessenger.Core.Services
         }
 
         // ── Event handlers ────────────────────────────────────────────────
+        //
+        // These are async void (event handlers), so an exception escaping them cannot be
+        // observed by anyone and would terminate the whole process — in standalone mode
+        // that includes the UI. Each one therefore delegates to a Task-returning method
+        // through RunHandler, which logs instead of crashing.
 
-        private async void OnMessageReceived(object? _, MessageReceivedEventArgs e)
+        private async void RunHandler(string name, Func<Task> handler)
+        {
+            try { await handler(); }
+            catch (Exception ex) { _logger.LogError(ex, "Unhandled error in {Handler}", name); }
+        }
+
+        private void OnMessageReceived(object? _, MessageReceivedEventArgs e)
+            => RunHandler(nameof(OnMessageReceived), () => HandleMessageReceivedAsync(e));
+
+        private void OnContactConnected(object? _, ContactStatusEventArgs e)
+            => RunHandler(nameof(OnContactConnected), () => HandleContactConnectedAsync(e));
+
+        private void OnContactDisconnected(object? _, ContactStatusEventArgs e)
+            => RunHandler(nameof(OnContactDisconnected), () => _pipeServer.BroadcastAsync(PipeMessage.Create(
+                PipeMessageType.ContactOffline,
+                new ContactStatusPayload(e.ContactId, false))));
+
+        private void OnDeliveryAcknowledged(object? _, DeliveryAckEventArgs e)
+            => RunHandler(nameof(OnDeliveryAcknowledged), () => HandleDeliveryAcknowledgedAsync(e));
+
+        private void OnPeerDiscovered(object? _, PeerDiscoveredEventArgs e)
+            => RunHandler(nameof(OnPeerDiscovered), () => HandlePeerDiscoveredAsync(e));
+
+        private void OnPipeMessageReceived(object? _, PipeMessage msg)
+            => RunHandler($"{nameof(OnPipeMessageReceived)}({msg.Type})", () => HandlePipeMessageAsync(msg));
+
+        private async Task HandleMessageReceivedAsync(MessageReceivedEventArgs e)
         {
             // Ensure the sender exists as a contact (keyed by their real UserId),
             // so the receiver sees the conversation and history matches.
@@ -259,7 +295,7 @@ namespace EncryptedMessenger.Core.Services
                 new NewMessagePayload(e.SenderId, e.PlainText, e.MessageId, e.Timestamp)));
         }
 
-        private async void OnContactConnected(object? _, ContactStatusEventArgs e)
+        private async Task HandleContactConnectedAsync(ContactStatusEventArgs e)
         {
             await _contactRepo.UpdateLastSeenAsync(e.ContactId);
             if (e.PublicKeyXml != null)
@@ -269,21 +305,16 @@ namespace EncryptedMessenger.Core.Services
                 new ContactStatusPayload(e.ContactId, true)));
         }
 
-        private async void OnContactDisconnected(object? _, ContactStatusEventArgs e)
+        private async Task HandleDeliveryAcknowledgedAsync(DeliveryAckEventArgs e)
         {
+            // DeliveryAck and ReadAck travel over the same TCP stream in that order,
+            // so a later Delivered can never overwrite an earlier Read here.
+            await _msgRepo.UpdateStatusAsync(e.MessageId, e.IsRead ? MessageStatus.Read : MessageStatus.Delivered);
             await _pipeServer.BroadcastAsync(PipeMessage.Create(
-                PipeMessageType.ContactOffline,
-                new ContactStatusPayload(e.ContactId, false)));
+                e.IsRead ? PipeMessageType.MessageRead : PipeMessageType.DeliveryAck, e.MessageId));
         }
 
-        private async void OnDeliveryAcknowledged(object? _, DeliveryAckEventArgs e)
-        {
-            await _msgRepo.UpdateStatusAsync(e.MessageId, MessageStatus.Delivered);
-            await _pipeServer.BroadcastAsync(
-                PipeMessage.Create(PipeMessageType.DeliveryAck, e.MessageId));
-        }
-
-        private async void OnPeerDiscovered(object? _, PeerDiscoveredEventArgs e)
+        private async Task HandlePeerDiscoveredAsync(PeerDiscoveredEventArgs e)
         {
             var contact = new Contact
             {
@@ -299,13 +330,16 @@ namespace EncryptedMessenger.Core.Services
                 new ContactStatusPayload(e.PeerId, true)));
         }
 
-        private async void OnPipeMessageReceived(object? _, PipeMessage msg)
+        private async Task HandlePipeMessageAsync(PipeMessage msg)
         {
             switch (msg.Type)
             {
                 case PipeMessageType.SendMessage:
                     var send = msg.Deserialize<SendMessagePayload>();
-                    await SendMessageAsync(send.RecipientId, send.PlainText);
+                    var sent = await SendMessageAsync(send.RecipientId, send.PlainText, send.MessageId);
+                    if (sent == null)
+                        await _pipeServer.BroadcastAsync(
+                            PipeMessage.Create(PipeMessageType.SendFailed, send.MessageId));
                     break;
 
                 case PipeMessageType.GetContacts:
@@ -333,7 +367,15 @@ namespace EncryptedMessenger.Core.Services
 
                 case PipeMessageType.MarkRead:
                     var mark = msg.Deserialize<MarkReadPayload>();
+                    var readMsg = await _msgRepo.GetByMessageIdAsync(mark.MessageId);
+                    if (readMsg == null || readMsg.IsOutgoing || readMsg.Status == MessageStatus.Read)
+                        break;
+
                     await _msgRepo.UpdateStatusAsync(mark.MessageId, MessageStatus.Read);
+                    // Tell the sender. The message arrived over their outbound connection,
+                    // i.e. our inbound stream from them; if that is gone the receipt is
+                    // only recorded locally (no retry queue yet).
+                    await _server.SendReadAckAsync(readMsg.SenderId, mark.MessageId);
                     break;
 
                 case PipeMessageType.Connect:
