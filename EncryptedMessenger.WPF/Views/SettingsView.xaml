@@ -131,7 +131,7 @@
                         <TextBlock Text="Verschlüsselung"
                                    Foreground="{StaticResource TextSecondaryBrush}"
                                    FontSize="11"/>
-                        <TextBlock Text="RSA-2048 + AES-256-CBC"
+                        <TextBlock Text="RSA-2048 + AES-256-GCM"
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    FontSize="13"
                                    Margin="0 3 0 0"/>

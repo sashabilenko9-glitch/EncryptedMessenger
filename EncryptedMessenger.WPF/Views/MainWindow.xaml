@@ -296,7 +296,7 @@
                 <TextBlock HorizontalAlignment="Center"
                            Foreground="{StaticResource TextMutedBrush}"
                            FontSize="10">
-                    🔐 RSA-2048 Schlüsselaustausch  ·  AES-256-CBC Nachrichten
+                    🔐 RSA-2048 Schlüsselaustausch  ·  AES-256-GCM Nachrichten
                 </TextBlock>
             </Border>
         </Grid>

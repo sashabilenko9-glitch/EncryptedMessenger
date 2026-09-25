@@ -102,7 +102,7 @@
                                Foreground="{StaticResource TextMutedBrush}"
                                FontSize="11"
                                HorizontalAlignment="Right"/>
-                    <TextBlock Text="AES-256-CBC"
+                    <TextBlock Text="AES-256-GCM"
                                Foreground="{StaticResource TextMutedBrush}"
                                FontSize="10"
                                HorizontalAlignment="Right"
