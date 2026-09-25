@@ -38,14 +38,24 @@ namespace EncryptedMessenger.Core.Database
         public Task<Message?> GetByMessageIdAsync(string messageId)
             => db.RunAsync(d => d.Messages.FirstOrDefaultAsync(m => m.MessageId == messageId));
 
-        /// <summary>Returns all messages for a conversation, oldest first.</summary>
+        /// <summary>
+        /// Returns the <paramref name="take"/> most recent messages of a conversation
+        /// (skipping the newest <paramref name="skip"/>, for paging further back),
+        /// ordered oldest first for display.
+        /// </summary>
         public Task<List<Message>> GetByConversationAsync(string conversationId, int skip = 0, int take = 50)
-            => db.RunAsync(d => d.Messages
-                                  .Where(m => m.ConversationId == conversationId)
-                                  .OrderBy(m => m.Timestamp)
-                                  .Skip(skip)
-                                  .Take(take)
-                                  .ToListAsync());
+            => db.RunAsync(async d =>
+            {
+                var newestFirst = await d.Messages
+                                         .Where(m => m.ConversationId == conversationId)
+                                         .OrderByDescending(m => m.Timestamp)
+                                         .ThenByDescending(m => m.Id)
+                                         .Skip(skip)
+                                         .Take(take)
+                                         .ToListAsync();
+                newestFirst.Reverse();
+                return newestFirst;
+            });
 
         /// <summary>Returns the most recent message per conversation (for contact list previews).</summary>
         public Task<Dictionary<string, Message>> GetLatestPerConversationAsync()

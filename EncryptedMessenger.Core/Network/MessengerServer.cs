@@ -103,6 +103,7 @@ namespace EncryptedMessenger.Core.Network
         {
             string? contactId = null;
             string? sessionId = null;
+            var announced = false;
             var stream = client.GetStream();
 
             try
@@ -140,7 +141,9 @@ namespace EncryptedMessenger.Core.Network
                 _logger.LogInformation("Handshake complete with {ContactId}", Short(contactId));
 
                 lock (_streamsLock) _activeStreams[contactId] = stream;
-                ContactConnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: true, peerPublicKey));
+                var remoteIp = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.MapToIPv4().ToString();
+                ContactConnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: true, peerPublicKey, remoteIp));
+                announced = true;
 
                 // 4. Receive loop
                 while (!ct.IsCancellationRequested && client.Connected)
@@ -168,7 +171,10 @@ namespace EncryptedMessenger.Core.Network
                             _activeStreams.Remove(contactId);
                     }
                     if (sessionId != null) _crypto.RemoveSession(sessionId);
-                    ContactDisconnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: false));
+                    // Pair every Disconnected with a prior Connected: a handshake that failed
+                    // halfway was never announced, so there is nothing to take back.
+                    if (announced)
+                        ContactDisconnected?.Invoke(this, new ContactStatusEventArgs(contactId, isOnline: false));
                     _logger.LogInformation("Disconnected {ContactId}", Short(contactId));
                 }
             }

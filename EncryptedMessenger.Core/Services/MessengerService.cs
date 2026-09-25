@@ -28,6 +28,15 @@ namespace EncryptedMessenger.Core.Services
         private readonly Dictionary<string, MessengerClient> _clients = [];
         private readonly SemaphoreSlim _clientsLock = new(1, 1);
 
+        // A peer counts as online for three missed discovery rounds after its last announcement.
+        private readonly PresenceTracker _presence =
+            new(TimeSpan.FromSeconds(PeerDiscovery.BroadcastIntervalSeconds * 3));
+
+        // Discovery re-announces every few seconds; LastSeen is only persisted this often.
+        private static readonly TimeSpan LastSeenWriteInterval = TimeSpan.FromMinutes(1);
+
+        private readonly CancellationTokenSource _cts = new();
+
         public MessengerService(AppSettings? settings = null, ILoggerFactory? loggerFactory = null)
         {
             _settings = settings ?? AppSettings.Load();
@@ -63,6 +72,52 @@ namespace EncryptedMessenger.Core.Services
             _ = Task.Run(_server.StartAsync);
             if (_settings.Discovery) _ = Task.Run(_discovery.StartAsync);
             _ = Task.Run(_pipeServer.StartAsync);
+            _ = Task.Run(() => PresenceSweepLoopAsync(_cts.Token));
+        }
+
+        // ── Presence ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Periodically re-evaluates every tracked contact so that one whose discovery
+        /// announcements stopped (and has no live connection) is reported offline.
+        /// </summary>
+        private async Task PresenceSweepLoopAsync(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(PeerDiscovery.BroadcastIntervalSeconds), ct);
+                    foreach (var id in _presence.KnownContacts())
+                        await PublishPresenceAsync(id);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { _logger.LogWarning(ex, "Presence sweep failed"); }
+            }
+        }
+
+        /// <summary>Tells the UI about <paramref name="contactId"/>'s presence, but only if it changed.</summary>
+        private async Task PublishPresenceAsync(string contactId)
+        {
+            if (!_presence.TryChangeReported(contactId, out var online)) return;
+            await _pipeServer.BroadcastAsync(PipeMessage.Create(
+                online ? PipeMessageType.ContactOnline : PipeMessageType.ContactOffline,
+                new ContactStatusPayload(contactId, online)));
+        }
+
+        /// <summary>
+        /// Sends the full contact list with the current online flags filled in, so a
+        /// list refresh in the UI doesn't reset every contact to offline.
+        /// </summary>
+        private async Task BroadcastContactListAsync()
+        {
+            var contacts = await _contactRepo.GetAllAsync();
+            foreach (var c in contacts)
+            {
+                c.IsOnline = _presence.IsOnline(c.Id);
+                _presence.SetReported(c.Id, c.IsOnline);
+            }
+            await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.ContactList, contacts));
         }
 
         // ── Outbound ─────────────────────────────────────────────────────
@@ -121,13 +176,19 @@ namespace EncryptedMessenger.Core.Services
             {
                 var client = await GetOrCreateClientAsync(recipientId, contact.IpAddress, contact.Port);
                 var id = client.ContactId is { Length: > 0 } realId ? realId : recipientId;
+                // Always answer an explicit connect request (even without a presence change):
+                // the open chat shows "Verbinde…" until it gets a status for this contact.
+                var online = _presence.IsOnline(id);
+                _presence.SetReported(id, online);
                 await _pipeServer.BroadcastAsync(PipeMessage.Create(
-                    PipeMessageType.ContactOnline, new ContactStatusPayload(id, true)));
+                    online ? PipeMessageType.ContactOnline : PipeMessageType.ContactOffline,
+                    new ContactStatusPayload(id, online)));
                 return true;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Connect failed for contact {RecipientId}", recipientId);
+                _presence.SetReported(recipientId, false);
                 await _pipeServer.BroadcastAsync(PipeMessage.Create(
                     PipeMessageType.ContactOffline, new ContactStatusPayload(recipientId, false)));
                 return false;
@@ -147,27 +208,56 @@ namespace EncryptedMessenger.Core.Services
 
             var client = new MessengerClient(_settings.UserId, _crypto, _loggerFactory.CreateLogger<MessengerClient>());
 
+            // Which contact this connection counts towards in the presence tracker. Set only
+            // once the handshake is done (and, for a manual contact, merged to the real id).
+            // Guarded by `link` so a disconnect racing the end of the handshake can't leave
+            // the connection counted forever.
+            var link = new object();
+            string? trackedId = null;
+            var closed = false;
+
             client.MessageReceived += OnMessageReceived;
             client.DeliveryAcknowledged += OnDeliveryAcknowledged;
             client.Disconnected += async (_, _) =>
             {
+                string? id;
+                lock (link)
+                {
+                    closed = true;
+                    id = trackedId;
+                    if (id != null) _presence.ConnectionClosed(id);
+                }
+                if (id == null) return;
+
                 try
                 {
                     await _clientsLock.WaitAsync();
-                    _clients.Remove(recipientId);
-                    _clientsLock.Release();
+                    try
+                    {
+                        // A newer client for the same contact may already be registered.
+                        if (_clients.TryGetValue(id, out var current) && current == client)
+                            _clients.Remove(id);
+                    }
+                    finally { _clientsLock.Release(); }
 
-                    await _pipeServer.BroadcastAsync(PipeMessage.Create(
-                        PipeMessageType.ContactOffline,
-                        new ContactStatusPayload(recipientId, false)));
+                    // Uses the real id, not the manual_ip_port id the connection started with.
+                    await PublishPresenceAsync(id);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to handle disconnect for {ContactId}", recipientId);
+                    _logger.LogWarning(ex, "Failed to handle disconnect for {ContactId}", id);
                 }
             };
 
-            await client.ConnectAsync(ip, port);
+            try
+            {
+                await client.ConnectAsync(ip, port);
+            }
+            catch
+            {
+                client.Dispose(); // don't leak the socket of a failed connect/handshake
+                throw;
+            }
 
             // After the handshake we know the peer's REAL UserId (client.ContactId).
             // If we connected via a manual "manual_ip_port" contact, relink it.
@@ -182,14 +272,22 @@ namespace EncryptedMessenger.Core.Services
                     PipeMessageType.ContactIdChanged,
                     new ContactIdChangedPayload(recipientId, realId)));
 
-                var refreshed = await _contactRepo.GetAllAsync();
-                await _pipeServer.BroadcastAsync(
-                    PipeMessage.Create(PipeMessageType.ContactList, refreshed));
+                await BroadcastContactListAsync();
             }
 
             await VerifyAndStorePeerKeyAsync(finalId, client.PeerPublicKeyXml);
 
             _clients[finalId] = client;
+
+            lock (link)
+            {
+                if (!closed)
+                {
+                    trackedId = finalId;
+                    _presence.ConnectionOpened(finalId);
+                }
+            }
+            await PublishPresenceAsync(finalId);
             return client;
         }
 
@@ -241,12 +339,17 @@ namespace EncryptedMessenger.Core.Services
             => RunHandler(nameof(OnMessageReceived), () => HandleMessageReceivedAsync(e));
 
         private void OnContactConnected(object? _, ContactStatusEventArgs e)
-            => RunHandler(nameof(OnContactConnected), () => HandleContactConnectedAsync(e));
+        {
+            // Count the connection synchronously so a quick disconnect can't be processed first.
+            _presence.ConnectionOpened(e.ContactId);
+            RunHandler(nameof(OnContactConnected), () => HandleContactConnectedAsync(e));
+        }
 
         private void OnContactDisconnected(object? _, ContactStatusEventArgs e)
-            => RunHandler(nameof(OnContactDisconnected), () => _pipeServer.BroadcastAsync(PipeMessage.Create(
-                PipeMessageType.ContactOffline,
-                new ContactStatusPayload(e.ContactId, false))));
+        {
+            _presence.ConnectionClosed(e.ContactId);
+            RunHandler(nameof(OnContactDisconnected), () => PublishPresenceAsync(e.ContactId));
+        }
 
         private void OnDeliveryAcknowledged(object? _, DeliveryAckEventArgs e)
             => RunHandler(nameof(OnDeliveryAcknowledged), () => HandleDeliveryAcknowledgedAsync(e));
@@ -264,15 +367,15 @@ namespace EncryptedMessenger.Core.Services
             var existing = await _contactRepo.GetByIdAsync(e.SenderId);
             if (existing == null)
             {
+                // Normally HandleContactConnectedAsync already created it (with the address);
+                // this covers the race where the first message is handled before that.
                 await _contactRepo.UpsertAsync(new Contact
                 {
                     Id = e.SenderId,
                     DisplayName = e.SenderId[..Math.Min(8, e.SenderId.Length)],
                     LastSeen = DateTime.UtcNow
                 });
-                var list = await _contactRepo.GetAllAsync();
-                await _pipeServer.BroadcastAsync(
-                    PipeMessage.Create(PipeMessageType.ContactList, list));
+                await BroadcastContactListAsync();
             }
 
             var msg = new Message
@@ -297,12 +400,18 @@ namespace EncryptedMessenger.Core.Services
 
         private async Task HandleContactConnectedAsync(ContactStatusEventArgs e)
         {
+            // Remember where an unknown peer connected from, so we can reply even with
+            // discovery off. Their listening port is not part of the handshake, so the
+            // default port is assumed; a later discovery announcement corrects it.
+            var listChanged = e.IpAddress != null
+                && await _contactRepo.EnsureWithAddressAsync(e.ContactId, e.IpAddress, AppSettings.DefaultTcpPort);
+
             await _contactRepo.UpdateLastSeenAsync(e.ContactId);
             if (e.PublicKeyXml != null)
                 await VerifyAndStorePeerKeyAsync(e.ContactId, e.PublicKeyXml);
-            await _pipeServer.BroadcastAsync(PipeMessage.Create(
-                PipeMessageType.ContactOnline,
-                new ContactStatusPayload(e.ContactId, true)));
+
+            if (listChanged) await BroadcastContactListAsync();
+            await PublishPresenceAsync(e.ContactId);
         }
 
         private async Task HandleDeliveryAcknowledgedAsync(DeliveryAckEventArgs e)
@@ -316,6 +425,8 @@ namespace EncryptedMessenger.Core.Services
 
         private async Task HandlePeerDiscoveredAsync(PeerDiscoveredEventArgs e)
         {
+            _presence.Heard(e.PeerId);
+
             var contact = new Contact
             {
                 Id = e.PeerId,
@@ -324,10 +435,9 @@ namespace EncryptedMessenger.Core.Services
                 Port = e.Port,
                 LastSeen = DateTime.UtcNow
             };
-            await _contactRepo.UpsertAsync(contact);
-            await _pipeServer.BroadcastAsync(PipeMessage.Create(
-                PipeMessageType.ContactOnline,
-                new ContactStatusPayload(e.PeerId, true)));
+            if (await _contactRepo.ApplyDiscoveryAsync(contact, LastSeenWriteInterval))
+                await BroadcastContactListAsync();
+            await PublishPresenceAsync(e.PeerId);
         }
 
         private async Task HandlePipeMessageAsync(PipeMessage msg)
@@ -343,9 +453,7 @@ namespace EncryptedMessenger.Core.Services
                     break;
 
                 case PipeMessageType.GetContacts:
-                    var contacts = await _contactRepo.GetAllAsync();
-                    await _pipeServer.BroadcastAsync(
-                        PipeMessage.Create(PipeMessageType.ContactList, contacts));
+                    await BroadcastContactListAsync();
                     break;
 
                 case PipeMessageType.GetHistory:
@@ -361,8 +469,8 @@ namespace EncryptedMessenger.Core.Services
                             m.DecryptedContent = m.EncryptedContent;
                         }
                     }
-                    await _pipeServer.BroadcastAsync(
-                        PipeMessage.Create(PipeMessageType.MessageHistory, hist));
+                    await _pipeServer.BroadcastAsync(PipeMessage.Create(
+                        PipeMessageType.MessageHistory, new MessageHistoryPayload(req.ConversationId, hist)));
                     break;
 
                 case PipeMessageType.MarkRead:
@@ -396,16 +504,14 @@ namespace EncryptedMessenger.Core.Services
                         LastSeen = DateTime.UtcNow
                     };
                     await _contactRepo.UpsertAsync(manual);
-
-                    var updated = await _contactRepo.GetAllAsync();
-                    await _pipeServer.BroadcastAsync(
-                        PipeMessage.Create(PipeMessageType.ContactList, updated));
+                    await BroadcastContactListAsync();
                     break;
             }
         }
 
         public async ValueTask DisposeAsync()
         {
+            _cts.Cancel();
             _discovery.Dispose();
             _server.Dispose();
             _pipeServer.Dispose();

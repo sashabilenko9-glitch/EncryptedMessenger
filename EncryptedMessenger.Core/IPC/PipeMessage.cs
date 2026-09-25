@@ -61,6 +61,12 @@ namespace EncryptedMessenger.Core.IPC
     public record ContactIdChangedPayload(string OldId, string NewId);
 
     /// <summary>
+    /// History reply. Carries the conversation it belongs to, because it is broadcast to
+    /// every UI and may arrive after the user already switched to another chat.
+    /// </summary>
+    public record MessageHistoryPayload(string ConversationId, List<Models.Message> Messages);
+
+    /// <summary>
     /// Sent to the UI right after a handshake completes. <paramref name="Changed"/> is true
     /// when this contact previously had a different key on file — a signal to the user that
     /// this may not be the same peer as last time (reinstall, or a possible MITM).

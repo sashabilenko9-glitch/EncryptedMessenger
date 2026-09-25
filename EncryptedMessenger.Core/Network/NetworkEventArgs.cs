@@ -8,13 +8,16 @@ namespace EncryptedMessenger.Core.Network
         public DateTime Timestamp{ get; } = timestamp;
     }
 
-    public class ContactStatusEventArgs(string contactId, bool isOnline, string? publicKeyXml = null) : EventArgs
+    public class ContactStatusEventArgs(string contactId, bool isOnline, string? publicKeyXml = null, string? ipAddress = null) : EventArgs
     {
         public string  ContactId    { get; } = contactId;
         public bool    IsOnline     { get; } = isOnline;
 
         /// <summary>The peer's RSA public key, set only when <see cref="IsOnline"/> is true (fresh handshake).</summary>
         public string? PublicKeyXml { get; } = publicKeyXml;
+
+        /// <summary>The peer's IPv4 address as seen on the inbound connection, set only when <see cref="IsOnline"/> is true.</summary>
+        public string? IpAddress    { get; } = ipAddress;
     }
 
     public class PeerDiscoveredEventArgs(string peerId, string displayName, string ip, int port) : EventArgs

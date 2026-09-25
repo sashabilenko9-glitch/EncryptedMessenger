@@ -112,6 +112,12 @@ namespace EncryptedMessenger.WPF.Converters
         public object Convert(object v, Type t, object p, CultureInfo c)
         {
             if (v is not DateTime dt || dt == DateTime.MinValue) return "";
+
+            // All timestamps are created with DateTime.UtcNow. Values coming back from SQLite
+            // (via the pipe) lose their Kind and arrive as Unspecified — treat those as UTC too.
+            if (dt.Kind != DateTimeKind.Local)
+                dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
+
             return dt.Date == DateTime.Today
                 ? dt.ToString("HH:mm")
                 : dt.ToString("dd.MM");

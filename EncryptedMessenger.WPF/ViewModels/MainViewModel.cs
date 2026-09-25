@@ -108,9 +108,7 @@ namespace EncryptedMessenger.WPF.ViewModels
                 switch (msg.Type)
                 {
                     case PipeMessageType.ContactList:
-                        var contacts = msg.Deserialize<List<Contact>>();
-                        Contacts.Clear();
-                        foreach (var c in contacts) Contacts.Add(new ContactViewModel(c));
+                        ReplaceContacts(msg.Deserialize<List<Contact>>());
                         break;
 
                     case PipeMessageType.ContactOnline:
@@ -152,8 +150,10 @@ namespace EncryptedMessenger.WPF.ViewModels
                         break;
 
                     case PipeMessageType.MessageHistory:
-                        var hist = msg.Deserialize<List<Message>>();
-                        ActiveChat?.PopulateHistory(hist);
+                        // History is broadcast and may belong to a chat the user already left.
+                        var hist = msg.Deserialize<MessageHistoryPayload>();
+                        if (ActiveChat?.ConversationId == hist.ConversationId)
+                            ActiveChat.PopulateHistory(hist.Messages);
                         break;
 
                     case PipeMessageType.KeyFingerprint:
@@ -166,6 +166,33 @@ namespace EncryptedMessenger.WPF.ViewModels
         }
 
         // ── Helpers ───────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Rebuilds the contact list from the service. Online state comes from the service;
+        /// unread badges/previews (UI-only state) and the current selection are carried over,
+        /// so a refresh doesn't wipe them.
+        /// </summary>
+        private void ReplaceContacts(List<Contact> contacts)
+        {
+            var previous = Contacts.ToDictionary(c => c.Id);
+            var selectedId = _selectedContact?.Id;
+
+            Contacts.Clear();
+            foreach (var c in contacts)
+            {
+                var vm = new ContactViewModel(c) { IsOnline = c.IsOnline };
+                if (previous.TryGetValue(c.Id, out var old))
+                {
+                    vm.UnreadCount = old.UnreadCount;
+                    vm.LastMessagePreview = old.LastMessagePreview;
+                }
+                Contacts.Add(vm);
+            }
+
+            // Restore the highlight without going through the setter, which would reopen the chat.
+            _selectedContact = Contacts.FirstOrDefault(c => c.Id == (ActiveChat?.ContactId ?? selectedId));
+            OnPropertyChanged(nameof(SelectedContact));
+        }
         private void UpdateContactStatus(string contactId, bool online)
         {
             var vm = Contacts.FirstOrDefault(c => c.Id == contactId);

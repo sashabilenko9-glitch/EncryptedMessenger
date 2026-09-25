@@ -31,6 +31,71 @@ namespace EncryptedMessenger.Core.Database
                 return existing ?? contact;
             });
 
+        /// <summary>
+        /// Applies a discovery announcement. Discovery repeats every few seconds, so this only
+        /// writes to the database when something actually changed (new contact, new address or
+        /// name) or <see cref="Contact.LastSeen"/> is older than <paramref name="lastSeenResolution"/>.
+        /// Returns true if the contact was created or its name/address changed.
+        /// </summary>
+        public Task<bool> ApplyDiscoveryAsync(Contact announced, TimeSpan lastSeenResolution)
+            => db.RunAsync(async d =>
+            {
+                var existing = await d.Contacts.FindAsync(announced.Id);
+                if (existing == null)
+                {
+                    d.Contacts.Add(announced);
+                    await d.SaveChangesAsync();
+                    return true;
+                }
+
+                var changed = existing.DisplayName != announced.DisplayName
+                              || existing.IpAddress != announced.IpAddress
+                              || existing.Port != announced.Port;
+                if (!changed && announced.LastSeen - existing.LastSeen < lastSeenResolution)
+                    return false;
+
+                existing.DisplayName = announced.DisplayName;
+                existing.IpAddress = announced.IpAddress;
+                existing.Port = announced.Port;
+                existing.LastSeen = announced.LastSeen;
+                await d.SaveChangesAsync();
+                return changed;
+            });
+
+        /// <summary>
+        /// Creates the contact if unknown, or fills in its address if it has none yet
+        /// (e.g. created from an incoming message while discovery was off). An address that
+        /// is already known is left alone — the inbound handshake is not authenticated.
+        /// Returns true if a contact was created or its address was filled in.
+        /// </summary>
+        public Task<bool> EnsureWithAddressAsync(string contactId, string ipAddress, int port)
+            => db.RunAsync(async d =>
+            {
+                var c = await d.Contacts.FindAsync(contactId);
+                if (c == null)
+                {
+                    d.Contacts.Add(new Contact
+                    {
+                        Id = contactId,
+                        DisplayName = contactId[..Math.Min(8, contactId.Length)],
+                        IpAddress = ipAddress,
+                        Port = port,
+                        LastSeen = DateTime.UtcNow
+                    });
+                }
+                else if (string.IsNullOrEmpty(c.IpAddress))
+                {
+                    c.IpAddress = ipAddress;
+                    c.Port = port;
+                }
+                else
+                {
+                    return false;
+                }
+                await d.SaveChangesAsync();
+                return true;
+            });
+
         public Task<List<Contact>> GetAllAsync()
             => db.RunAsync(d => d.Contacts.OrderBy(c => c.DisplayName).ToListAsync());
 

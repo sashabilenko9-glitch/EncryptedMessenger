@@ -19,6 +19,7 @@ namespace EncryptedMessenger.WPF.ViewModels
         public string ContactId => _contact.Id;
         public string ContactName => _contact.DisplayName;
         public string ContactIp => _contact.IpAddress;
+        public string ConversationId => MessageRepository.ConversationId(_ownId, _contact.Id);
         public string ContactFirstLetter =>
             string.IsNullOrEmpty(_contact.DisplayName) ? "?"
             : _contact.DisplayName[0].ToString().ToUpper();

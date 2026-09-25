@@ -24,6 +24,11 @@ namespace EncryptedMessenger.Core.IPC
         private readonly List<PipeStream> _clients = [];
         private readonly object _clientsLock = new();
 
+        // Broadcasts are triggered concurrently from network, discovery and pipe handlers.
+        // Two overlapping writes to the same pipe could interleave JSON lines, so only one
+        // broadcast writes at a time.
+        private readonly SemaphoreSlim _broadcastLock = new(1, 1);
+
         public PipeServer(ILogger? logger = null)
         {
             _logger = logger ?? NullLogger.Instance;
@@ -97,11 +102,16 @@ namespace EncryptedMessenger.Core.IPC
             List<PipeStream> snapshot;
             lock (_clientsLock) snapshot = [.._clients];
 
-            foreach (var client in snapshot)
+            await _broadcastLock.WaitAsync();
+            try
             {
-                try { await client.WriteAsync(data); await client.FlushAsync(); }
-                catch (Exception ex) { _logger.LogDebug(ex, "Broadcast to a client failed (likely disconnected)"); }
+                foreach (var client in snapshot)
+                {
+                    try { await client.WriteAsync(data); await client.FlushAsync(); }
+                    catch (Exception ex) { _logger.LogDebug(ex, "Broadcast to a client failed (likely disconnected)"); }
+                }
             }
+            finally { _broadcastLock.Release(); }
         }
 
         public void Dispose() => Stop();
