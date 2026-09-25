@@ -3,7 +3,7 @@
 ![C#](https://img.shields.io/badge/C%23-239120?logo=csharp&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
-[![CI](https://github.com/sashabilenko9-glitch/EncryptedMessenger/actions/workflows/ci.yml/badge.svg?branch=v2-dev)](https://github.com/sashabilenko9-glitch/EncryptedMessenger/actions/workflows/ci.yml)
+[![CI](https://github.com/sashabilenko9-glitch/EncryptedMessenger/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sashabilenko9-glitch/EncryptedMessenger/actions/workflows/ci.yml)
 ![EncryptedMessenger](assets/screenshot.png)
 A serverless, end-to-end encrypted peer-to-peer messenger for the local network (LAN), built with C# and .NET 8. Two or more instances discover each other automatically and exchange text messages directly — no central server, no internet round-trip.
 
