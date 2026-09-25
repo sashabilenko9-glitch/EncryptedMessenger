@@ -50,7 +50,7 @@ namespace EncryptedMessenger.Core.Services
 
             _server = new MessengerServer(
                 _settings.TcpPort, _settings.UserId, _settings.DisplayName, _crypto,
-                _loggerFactory.CreateLogger<MessengerServer>(), VerifyPeerKeyAsync);
+                _loggerFactory.CreateLogger<MessengerServer>(), VerifyPeerKeyAsync, AcceptsMessagesFromAsync);
 
             _discovery = new PeerDiscovery(
                 _settings.UdpPort, _settings.UserId, _settings.DisplayName, _settings.TcpPort,
@@ -62,6 +62,7 @@ namespace EncryptedMessenger.Core.Services
             _server.ContactConnected += OnContactConnected;
             _server.ContactDisconnected += OnContactDisconnected;
             _server.DeliveryAcknowledged += OnDeliveryAcknowledged;
+            _server.ContactControlReceived += OnContactControlReceived;
             _discovery.PeerDiscovered += OnPeerDiscovered;
             _pipeServer.MessageReceived += OnPipeMessageReceived;
         }
@@ -108,55 +109,94 @@ namespace EncryptedMessenger.Core.Services
             // Retry trigger: contact came (back) online. Not awaited: PublishPresenceAsync is
             // also called while _clientsLock is held (GetOrCreateClientAsync), and the flush
             // may need that lock — awaiting it here would deadlock.
-            if (online) RunHandler(nameof(FlushPendingReadAcksAsync), () => FlushPendingReadAcksAsync(contactId));
+            if (online) RunHandler(nameof(DeliverOwedAsync), () => DeliverOwedAsync(contactId));
         }
 
-        // ── Read receipts ────────────────────────────────────────────────
+        /// <summary>
+        /// Contact just came online. Flush what we owe over an existing connection — and if we
+        /// have an unanswered request to them, actively connect: otherwise a request made while
+        /// they were offline would wait until THEY happen to connect to us. Only runs on an
+        /// offline→online transition, so an unreachable peer isn't dialled every 5 seconds.
+        /// </summary>
+        private async Task DeliverOwedAsync(string contactId)
+        {
+            var contact = await _contactRepo.GetByIdAsync(contactId);
+            if (contact?.State == ContactState.OutgoingRequest)
+                await TryConnectAsync(contact);   // a new connection triggers FlushOwedAsync itself
+            else
+                await FlushOwedAsync(contactId);
+        }
+
+        /// <summary>Opens (or reuses) an outbound connection without telling the UI; failures are only logged.</summary>
+        private async Task<MessengerClient?> TryConnectAsync(Contact contact)
+        {
+            if (string.IsNullOrEmpty(contact.IpAddress)) return null;
+            await _clientsLock.WaitAsync();
+            try
+            {
+                return await GetOrCreateClientAsync(contact.Id, contact.IpAddress, contact.Port);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation(ex, "Background connect to {ContactId} failed", contact.Id);
+                return null;
+            }
+            finally { _clientsLock.Release(); }
+        }
+
+        // ── Owed control packets (read receipts, contact requests) ───────
 
         /// <summary>
-        /// Delivers a ReadAck over whichever connection to <paramref name="contactId"/> exists:
-        /// the inbound one they opened to us, or our outbound one to them. Never opens a new
-        /// connection just for a receipt.
+        /// Delivers a control packet over whichever connection to <paramref name="contactId"/>
+        /// exists: the inbound one they opened to us, or our outbound one to them. Never opens a
+        /// new connection by itself.
         /// </summary>
-        private async Task<bool> TrySendReadAckAsync(string contactId, string messageId)
+        private async Task<bool> TrySendControlAsync(string contactId, PacketType type, string? messageId = null, string payload = "")
         {
-            if (await _server.SendReadAckAsync(contactId, messageId)) return true;
+            if (await _server.SendControlAsync(contactId, type, messageId, payload)) return true;
 
             await _clientsLock.WaitAsync();
             try
             {
                 return _clients.TryGetValue(contactId, out var client)
-                       && await client.SendReadAckAsync(messageId);
+                       && await client.SendControlAsync(type, messageId, payload);
             }
             finally { _clientsLock.Release(); }
         }
 
-        // Contacts whose pending receipts are being sent right now. Several triggers
+        // Contacts whose owed packets are being sent right now. Several triggers
         // (inbound connect, outbound connect, going online) often fire together; this
-        // keeps them from sending the same receipts in parallel.
-        private readonly HashSet<string> _flushingReadAcks = [];
+        // keeps them from sending the same packets in parallel.
+        private readonly HashSet<string> _flushing = [];
 
         /// <summary>
-        /// Sends every read receipt still owed to <paramref name="contactId"/>, oldest first,
-        /// marking each Read once it went out. Stops at the first failure — the rest stay
-        /// ReadAckPending (in the database, so they survive a restart) for the next attempt.
+        /// Sends everything still owed to <paramref name="contactId"/>, all of it recorded in the
+        /// database so it survives a restart:
+        ///  • our contact request, while the contact is OutgoingRequest (re-sent on every new
+        ///    connection until they answer — a lost Accept is healed because a repeated request
+        ///    to someone who already accepted us is answered with Accept again);
+        ///  • read receipts (ReadAckPending), oldest first, stopping at the first failure.
         /// </summary>
-        private async Task FlushPendingReadAcksAsync(string contactId)
+        private async Task FlushOwedAsync(string contactId)
         {
-            lock (_flushingReadAcks)
-                if (!_flushingReadAcks.Add(contactId)) return;
+            lock (_flushing)
+                if (!_flushing.Add(contactId)) return;
 
             try
             {
+                var contact = await _contactRepo.GetByIdAsync(contactId);
+                if (contact?.State == ContactState.OutgoingRequest)
+                    await TrySendControlAsync(contactId, PacketType.ContactRequest, payload: _settings.DisplayName);
+
                 foreach (var m in await _msgRepo.GetPendingReadAcksAsync(contactId))
                 {
-                    if (!await TrySendReadAckAsync(contactId, m.MessageId)) break;
+                    if (!await TrySendControlAsync(contactId, PacketType.ReadAck, m.MessageId)) break;
                     await _msgRepo.UpdateStatusAsync(m.MessageId, MessageStatus.Read);
                 }
             }
             finally
             {
-                lock (_flushingReadAcks) _flushingReadAcks.Remove(contactId);
+                lock (_flushing) _flushing.Remove(contactId);
             }
         }
 
@@ -185,6 +225,11 @@ namespace EncryptedMessenger.Core.Services
         {
             var contact = await _contactRepo.GetByIdAsync(recipientId);
             if (contact == null) return null;
+            if (contact.State != ContactState.Accepted)
+            {
+                _logger.LogWarning("Not sending to {RecipientId}: not an accepted contact ({State})", recipientId, contact.State);
+                return null;
+            }
 
             await _clientsLock.WaitAsync();
             try
@@ -277,6 +322,7 @@ namespace EncryptedMessenger.Core.Services
 
             client.MessageReceived += OnMessageReceived;
             client.DeliveryAcknowledged += OnDeliveryAcknowledged;
+            client.ContactControlReceived += OnContactControlReceived;
             client.Disconnected += async (_, _) =>
             {
                 string? id;
@@ -331,7 +377,9 @@ namespace EncryptedMessenger.Core.Services
                     PipeMessageType.ContactIdChanged,
                     new ContactIdChangedPayload(recipientId, realId)));
 
-                await BroadcastContactListAsync();
+                // All lists: the merged row may be a contact OR a pending request (adding by IP
+                // is a request), so the requests list must drop the manual_ip_port entry too.
+                await BroadcastRelationshipsAsync();
             }
 
             await AnnounceTrustedKeyAsync(finalId, client.PeerPublicKeyXml);
@@ -352,7 +400,7 @@ namespace EncryptedMessenger.Core.Services
             // _clientsLock here and the flush needs it for the outbound channel — awaiting
             // would deadlock (SemaphoreSlim isn't re-entrant). RunHandler lets it run once
             // our caller releases the lock.
-            RunHandler(nameof(FlushPendingReadAcksAsync), () => FlushPendingReadAcksAsync(finalId));
+            RunHandler(nameof(FlushOwedAsync), () => FlushOwedAsync(finalId));
             return client;
         }
 
@@ -478,6 +526,9 @@ namespace EncryptedMessenger.Core.Services
         private void OnDeliveryAcknowledged(object? _, DeliveryAckEventArgs e)
             => RunHandler(nameof(OnDeliveryAcknowledged), () => HandleDeliveryAcknowledgedAsync(e));
 
+        private void OnContactControlReceived(object? _, ContactControlEventArgs e)
+            => RunHandler($"{nameof(OnContactControlReceived)}({e.Type})", () => HandleContactControlAsync(e));
+
         private void OnPeerDiscovered(object? _, PeerDiscoveredEventArgs e)
             => RunHandler(nameof(OnPeerDiscovered), () => HandlePeerDiscoveredAsync(e));
 
@@ -488,24 +539,14 @@ namespace EncryptedMessenger.Core.Services
         {
             // Ensure the sender exists as a contact (keyed by their real UserId),
             // so the receiver sees the conversation and history matches.
-            // STAGE 1 (temporary): a message still makes the sender a contact, as before.
-            // Stage 2 replaces this with rejecting messages from non-accepted peers.
-            var existing = await _contactRepo.GetByIdAsync(e.SenderId);
-            if (existing == null)
+            // The server already refuses messages from non-contacts before acking them
+            // (AcceptsMessagesFromAsync). Checking again here — the only place messages are
+            // stored — keeps that guarantee even for a path that forgets to check (e.g. a
+            // Message arriving over an outbound connection).
+            if (!await AcceptsMessagesFromAsync(e.SenderId))
             {
-                // Normally the handshake already created a Stranger row (key pinning);
-                // this covers the race where the first message is handled before that.
-                await _contactRepo.AddAcceptedAsync(new Contact
-                {
-                    Id = e.SenderId,
-                    DisplayName = Contact.PlaceholderName(e.SenderId),
-                    LastSeen = DateTime.UtcNow
-                });
-            }
-            if (existing == null || await _contactRepo.AcceptAsync(e.SenderId))
-            {
-                if (RemoveNearby(e.SenderId)) await BroadcastNearbyAsync();
-                await BroadcastContactListAsync();
+                _logger.LogWarning("Dropped message {MessageId} from non-contact {ContactId}", e.MessageId, e.SenderId);
+                return;
             }
 
             var msg = new Message
@@ -544,7 +585,7 @@ namespace EncryptedMessenger.Core.Services
             await PublishPresenceAsync(e.ContactId);
 
             // Retry trigger: they connected to us — a channel for owed receipts now exists.
-            await FlushPendingReadAcksAsync(e.ContactId);
+            await FlushOwedAsync(e.ContactId);
         }
 
         private async Task HandleDeliveryAcknowledgedAsync(DeliveryAckEventArgs e)
@@ -570,17 +611,152 @@ namespace EncryptedMessenger.Core.Services
             };
             var (state, changed) = await _contactRepo.ApplyDiscoveryAsync(announced, LastSeenWriteInterval);
 
+            switch (state)
+            {
+                case ContactState.Accepted:
+                    if (changed) await BroadcastContactListAsync();
+                    await PublishPresenceAsync(e.PeerId);
+                    break;
+
+                case ContactState.OutgoingRequest:
+                case ContactState.IncomingRequest:
+                    // Shown under "requests", not "nearby". Presence still matters: going online
+                    // is what triggers re-sending our request (DeliverOwedAsync).
+                    if (changed) await BroadcastRequestsAsync();
+                    await PublishPresenceAsync(e.PeerId);
+                    break;
+
+                default:
+                    // Not a contact (unknown, or only known by a pinned key): offer it in "nearby".
+                    if (UpdateNearby(new NearbyPeerPayload(e.PeerId, e.DisplayName, e.IpAddress, e.Port)))
+                        await BroadcastNearbyAsync();
+                    break;
+            }
+        }
+
+        // ── Contact requests ─────────────────────────────────────────────
+
+        private async Task BroadcastRequestsAsync()
+        {
+            var requests = (await _contactRepo.GetRequestsAsync())
+                .Select(c => new ContactRequestPayload(c.Id, c.DisplayName, c.IpAddress,
+                                                       Incoming: c.State == ContactState.IncomingRequest))
+                .ToList();
+            await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.RequestList, requests));
+        }
+
+        /// <summary>Everything the UI shows about relationships changed: contacts, requests, nearby.</summary>
+        private async Task BroadcastRelationshipsAsync()
+        {
+            await BroadcastContactListAsync();
+            await BroadcastRequestsAsync();
+            await BroadcastNearbyAsync();
+        }
+
+        /// <summary>
+        /// The user asks <paramref name="target"/> to become a contact (from "nearby" or by IP).
+        /// Records the request first, then tries to deliver it right away over a new or existing
+        /// connection; if that fails it stays OutgoingRequest and FlushOwedAsync retries later.
+        /// </summary>
+        private async Task SendContactRequestAsync(Contact target)
+        {
+            var state = await _contactRepo.MarkRequestSentAsync(target);
+            RemoveNearby(target.Id);
+            await BroadcastRelationshipsAsync();
+            _logger.LogInformation("Contact request to {ContactId}: state {State}", target.Id, state);
+
             if (state == ContactState.Accepted)
             {
-                if (changed) await BroadcastContactListAsync();
-                await PublishPresenceAsync(e.PeerId);
+                // They had already asked us — our request is the answer.
+                await TryConnectAsync(target);
+                await TrySendControlAsync(target.Id, PacketType.ContactAccept);
+                await PublishPresenceAsync(target.Id);
+                return;
             }
-            else
+
+            // Connecting triggers FlushOwedAsync, which sends the request. For a manual
+            // "manual_ip_port" target the handshake also merges it into the peer's real id
+            // (which inherits OutgoingRequest), and the flush then runs for that id.
+            var client = await TryConnectAsync(target);
+            if (client != null && client.ContactId == target.Id)
+                await FlushOwedAsync(target.Id);   // already-open connection: no new-connection trigger
+        }
+
+        /// <summary>A ContactRequest/Accept/Decline/NotAContact packet arrived over a key-pinned connection.</summary>
+        private async Task HandleContactControlAsync(ContactControlEventArgs e)
+        {
+            switch (e.Type)
             {
-                // Not a contact (unknown, or only known by a pinned key): offer it in "nearby".
-                if (UpdateNearby(new NearbyPeerPayload(e.PeerId, e.DisplayName, e.IpAddress, e.Port)))
-                    await BroadcastNearbyAsync();
+                case PacketType.ContactRequest:
+                    var (old, now) = await _contactRepo.MarkRequestReceivedAsync(e.ContactId, e.Payload);
+                    _logger.LogInformation("Contact request from {ContactId}: {Old} -> {New}", e.ContactId, old, now);
+                    // Already contacts (their earlier Accept from us got lost, or a mutual request):
+                    // answer Accept again. Repeating it is harmless — that's what makes retries safe.
+                    if (now == ContactState.Accepted)
+                        await TrySendControlAsync(e.ContactId, PacketType.ContactAccept);
+                    if (old != now)
+                    {
+                        RemoveNearby(e.ContactId);
+                        await BroadcastRelationshipsAsync();
+                        if (now == ContactState.Accepted) await PublishPresenceAsync(e.ContactId);
+                    }
+                    break;
+
+                case PacketType.ContactAccept:
+                    // Only honoured if WE asked — nobody can add themselves to our contacts.
+                    if (await _contactRepo.TransitionAsync(e.ContactId, ContactState.OutgoingRequest, ContactState.Accepted))
+                    {
+                        _logger.LogInformation("{ContactId} accepted our contact request", e.ContactId);
+                        await BroadcastRelationshipsAsync();
+                        await PublishPresenceAsync(e.ContactId);
+                    }
+                    break;
+
+                case PacketType.ContactDecline:
+                    if (await _contactRepo.TransitionAsync(e.ContactId, ContactState.OutgoingRequest, ContactState.Stranger))
+                    {
+                        _logger.LogInformation("{ContactId} declined our contact request", e.ContactId);
+                        await BroadcastRelationshipsAsync();
+                    }
+                    break;
+
+                case PacketType.NotAContact:
+                    // We think we're contacts, they don't (their data was reset, or an old one-sided
+                    // contact). The message was dropped on their side: mark it failed, and turn the
+                    // relationship back into a request so they get asked instead of silently ignored.
+                    if (e.MessageId != null)
+                    {
+                        await _msgRepo.UpdateStatusAsync(e.MessageId, MessageStatus.Failed);
+                        await _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.SendFailed, e.MessageId));
+                    }
+                    if (await _contactRepo.TransitionAsync(e.ContactId, ContactState.Accepted, ContactState.OutgoingRequest))
+                    {
+                        _logger.LogWarning("{ContactId} doesn't have us as a contact; re-sending a contact request", e.ContactId);
+                        await BroadcastRelationshipsAsync();
+                        await TrySendControlAsync(e.ContactId, PacketType.ContactRequest, payload: _settings.DisplayName);
+                    }
+                    break;
             }
+        }
+
+        /// <summary>The user answered an incoming request.</summary>
+        private async Task AnswerContactRequestAsync(string contactId, bool accept)
+        {
+            var to = accept ? ContactState.Accepted : ContactState.Stranger;
+            if (!await _contactRepo.TransitionAsync(contactId, ContactState.IncomingRequest, to)) return;
+            await BroadcastRelationshipsAsync();
+
+            // Best effort. If the answer doesn't arrive, the requester is still OutgoingRequest
+            // and re-sends; a repeated request to an Accepted contact is answered with Accept.
+            // (A lost Decline just means they may ask again.)
+            var type = accept ? PacketType.ContactAccept : PacketType.ContactDecline;
+            if (!await TrySendControlAsync(contactId, type) && accept)
+            {
+                var contact = await _contactRepo.GetByIdAsync(contactId);
+                if (contact != null && await TryConnectAsync(contact) != null)
+                    await TrySendControlAsync(contactId, type);
+            }
+            if (accept) await PublishPresenceAsync(contactId);
         }
 
         // ── Nearby (discovered peers that aren't contacts) ───────────────
@@ -623,10 +799,7 @@ namespace EncryptedMessenger.Core.Services
             return _pipeServer.BroadcastAsync(PipeMessage.Create(PipeMessageType.NearbyList, list));
         }
 
-        /// <summary>
-        /// The user picked a nearby peer. Stage 1: add it as a contact directly.
-        /// (Stage 2 replaces this with a contact request the peer has to accept.)
-        /// </summary>
+        /// <summary>The user picked a nearby peer: send them a contact request.</summary>
         private async Task AddNearbyPeerAsync(string peerId)
         {
             NearbyPeerPayload? peer;
@@ -637,7 +810,7 @@ namespace EncryptedMessenger.Core.Services
                 return;
             }
 
-            await _contactRepo.AddAcceptedAsync(new Contact
+            await SendContactRequestAsync(new Contact
             {
                 Id = peer.PeerId,
                 DisplayName = peer.DisplayName,
@@ -645,10 +818,20 @@ namespace EncryptedMessenger.Core.Services
                 Port = peer.Port,
                 LastSeen = DateTime.UtcNow
             });
-            RemoveNearby(peerId);
-            await BroadcastContactListAsync();
-            await BroadcastNearbyAsync();
-            await PublishPresenceAsync(peerId);
+        }
+
+        /// <summary>Consent check used by the TCP server (before acking) and before storing a message.</summary>
+        private async Task<bool> AcceptsMessagesFromAsync(string contactId)
+        {
+            try
+            {
+                return (await _contactRepo.GetByIdAsync(contactId))?.State == ContactState.Accepted;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Consent check failed for {ContactId}; rejecting message", contactId);
+                return false;   // fail closed
+            }
         }
 
         private async Task HandlePipeMessageAsync(PipeMessage msg)
@@ -664,15 +847,28 @@ namespace EncryptedMessenger.Core.Services
                     break;
 
                 case PipeMessageType.GetContacts:
-                    await BroadcastContactListAsync();
-                    break;
-
                 case PipeMessageType.GetNearby:
-                    await BroadcastNearbyAsync();
+                    // Contacts, requests (for the badge) and nearby always travel together.
+                    await BroadcastRelationshipsAsync();
                     break;
 
                 case PipeMessageType.AddNearbyPeer:
                     await AddNearbyPeerAsync(msg.Deserialize<AddNearbyPeerPayload>().PeerId);
+                    break;
+
+                case PipeMessageType.AcceptContactRequest:
+                    await AnswerContactRequestAsync(msg.Deserialize<ContactIdPayload>().ContactId, accept: true);
+                    break;
+
+                case PipeMessageType.DeclineContactRequest:
+                    await AnswerContactRequestAsync(msg.Deserialize<ContactIdPayload>().ContactId, accept: false);
+                    break;
+
+                case PipeMessageType.CancelContactRequest:
+                    // Local only: if they accept later, their Accept is ignored (we're no longer OutgoingRequest).
+                    if (await _contactRepo.TransitionAsync(msg.Deserialize<ContactIdPayload>().ContactId,
+                                                           ContactState.OutgoingRequest, ContactState.Stranger))
+                        await BroadcastRelationshipsAsync();
                     break;
 
                 case PipeMessageType.GetHistory:
@@ -700,9 +896,9 @@ namespace EncryptedMessenger.Core.Services
 
                     // Record "read, receipt owed" first, THEN try to send. If sending fails (or
                     // the process dies in between) the receipt is still in the database and
-                    // FlushPendingReadAcksAsync delivers it on the next connection.
+                    // FlushOwedAsync delivers it on the next connection.
                     await _msgRepo.UpdateStatusAsync(mark.MessageId, MessageStatus.ReadAckPending);
-                    await FlushPendingReadAcksAsync(readMsg.SenderId);
+                    await FlushOwedAsync(readMsg.SenderId);
                     break;
 
                 case PipeMessageType.Connect:
@@ -727,8 +923,8 @@ namespace EncryptedMessenger.Core.Services
                         Port = add.Port,
                         LastSeen = DateTime.UtcNow
                     };
-                    await _contactRepo.AddAcceptedAsync(manual);
-                    await BroadcastContactListAsync();
+                    // Adding by IP is a contact request too; the handshake reveals the real id.
+                    await SendContactRequestAsync(manual);
                     break;
             }
         }

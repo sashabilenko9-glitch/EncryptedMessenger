@@ -16,6 +16,7 @@ namespace EncryptedMessenger.Core.Network
         public event EventHandler<ContactStatusEventArgs>? ContactConnected;
         public event EventHandler<ContactStatusEventArgs>? ContactDisconnected;
         public event EventHandler<DeliveryAckEventArgs>? DeliveryAcknowledged;
+        public event EventHandler<ContactControlEventArgs>? ContactControlReceived;
 
         private readonly int _port;
         private readonly string _ownId;
@@ -30,17 +31,23 @@ namespace EncryptedMessenger.Core.Network
         private readonly object _streamsLock = new();
 
         // Acks are written both from a connection's receive loop (DeliveryAck) and from
-        // SendReadAckAsync (ReadAck). A frame is two writes (length + body), so concurrent
+        // SendControlAsync (ReadAck, contact requests). A frame is two writes (length + body), so concurrent
         // writers could interleave and corrupt the stream — serialise all server writes.
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
         private readonly PeerKeyVerifier? _verifyPeerKey;
+        private readonly Func<string, Task<bool>>? _acceptsMessagesFrom;
 
         /// <param name="verifyPeerKey">
         /// Consulted after the peer's KeyExchange and before its session key is accepted.
         /// Null = accept any key (used only by tests/tools that have no contact store).
         /// </param>
-        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null, PeerKeyVerifier? verifyPeerKey = null)
+        /// <param name="acceptsMessagesFrom">
+        /// Asked for every incoming Message: is this peer an accepted contact? Null = accept all
+        /// (tests/tools only).
+        /// </param>
+        public MessengerServer(int port, string ownId, string ownDisplayName, CryptoManager crypto, ILogger? logger = null,
+                               PeerKeyVerifier? verifyPeerKey = null, Func<string, Task<bool>>? acceptsMessagesFrom = null)
         {
             _port = port;
             _ownId = ownId;
@@ -48,6 +55,7 @@ namespace EncryptedMessenger.Core.Network
             _crypto = crypto;
             _logger = logger ?? NullLogger.Instance;
             _verifyPeerKey = verifyPeerKey;
+            _acceptsMessagesFrom = acceptsMessagesFrom;
         }
 
         // ── Lifecycle ─────────────────────────────────────────────────────
@@ -203,6 +211,22 @@ namespace EncryptedMessenger.Core.Network
             switch (pkt.Type)
             {
                 case PacketType.Message:
+                    // Consent: only accepted contacts may message us. Checked BEFORE decrypting,
+                    // raising the event and acking — a stranger's message is neither stored nor
+                    // shown, and no DeliveryAck pretends it arrived. NotAContact tells the sender why.
+                    if (_acceptsMessagesFrom != null && !await _acceptsMessagesFrom(contactId))
+                    {
+                        _logger.LogInformation("Rejected message from non-contact {ContactId} id={MessageId}", Short(contactId), pkt.MessageId);
+                        await SendLockedAsync(stream, new NetworkPacket
+                        {
+                            Type = PacketType.NotAContact,
+                            SenderId = _ownId,
+                            MessageId = pkt.MessageId,
+                            Timestamp = DateTime.UtcNow
+                        }, ct);
+                        break;
+                    }
+
                     // Attribute to the handshake identity, never to the self-declared SenderId.
                     var plain = _crypto.DecryptMessage(pkt.Payload, sessionId);
                     _logger.LogInformation("Message received from {ContactId} id={MessageId}", Short(contactId), pkt.MessageId);
@@ -225,19 +249,27 @@ namespace EncryptedMessenger.Core.Network
                             pkt.MessageId, isRead: pkt.Type == PacketType.ReadAck));
                     break;
 
+                case PacketType.ContactRequest:
+                case PacketType.ContactAccept:
+                case PacketType.ContactDecline:
+                case PacketType.NotAContact:
+                    ContactControlReceived?.Invoke(this, new ContactControlEventArgs(
+                        contactId, pkt.Type, pkt.Payload, pkt.MessageId));
+                    break;
+
                 case PacketType.Disconnect:
                     break;
             }
         }
 
-        // ── Outbound read-receipt ─────────────────────────────────────────
+        // ── Outbound control packets ──────────────────────────────────────
 
         /// <summary>
-        /// Sends a ReadAck over the inbound connection from <paramref name="contactId"/>.
-        /// Returns false if there is no such connection or the write failed — the caller
-        /// keeps the receipt pending and retries later.
+        /// Sends an unencrypted control packet (ReadAck, ContactRequest/Accept/Decline, NotAContact)
+        /// over the inbound connection from <paramref name="contactId"/>. Returns false if there is
+        /// no such connection or the write failed — the caller keeps it pending and retries later.
         /// </summary>
-        public async Task<bool> SendReadAckAsync(string contactId, string messageId)
+        public async Task<bool> SendControlAsync(string contactId, PacketType type, string? messageId = null, string payload = "")
         {
             NetworkStream? stream;
             lock (_streamsLock) _activeStreams.TryGetValue(contactId, out stream);
@@ -247,16 +279,17 @@ namespace EncryptedMessenger.Core.Network
             {
                 await SendLockedAsync(stream, new NetworkPacket
                 {
-                    Type = PacketType.ReadAck,
+                    Type = type,
                     SenderId = _ownId,
                     MessageId = messageId,
+                    Payload = payload,
                     Timestamp = DateTime.UtcNow
                 });
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Read-ack send failed for {ContactId}", Short(contactId));
+                _logger.LogWarning(ex, "{PacketType} send failed for {ContactId}", type, Short(contactId));
                 return false;
             }
         }

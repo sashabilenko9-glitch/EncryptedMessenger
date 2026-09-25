@@ -138,37 +138,100 @@ namespace EncryptedMessenger.Core.Database
                                   .OrderBy(c => c.DisplayName)
                                   .ToListAsync());
 
+        /// <summary>Contacts with a pending request in either direction.</summary>
+        public Task<List<Contact>> GetRequestsAsync()
+            => db.RunAsync(d => d.Contacts
+                                  .Where(c => c.State == ContactState.IncomingRequest
+                                           || c.State == ContactState.OutgoingRequest)
+                                  .OrderBy(c => c.DisplayName)
+                                  .ToListAsync());
+
+        // ── Contact-request state machine ─────────────────────────────────
+        //
+        //   Stranger ──we ask──▶ OutgoingRequest ──they accept──▶ Accepted
+        //   Stranger ──they ask─▶ IncomingRequest ──we accept───▶ Accepted
+        //   both ask each other  ─────────────────────────────────▶ Accepted
+        //   decline / cancel ──▶ back to Stranger
+        //
+        // Every transition is one atomic compare-and-set inside RunAsync, so two events racing
+        // (our click vs. their packet) can't overwrite each other's result.
+
         /// <summary>
-        /// Makes <paramref name="contact"/> an accepted contact: creates it, or — if the peer is
-        /// already known (a Stranger row from a pinned key) — fills in name/address and promotes it.
+        /// We send a request to <paramref name="target"/> (new peer from "nearby", a manual
+        /// contact, or a known stranger). Creates the row if needed and fills in name/address.
+        /// Returns the resulting state: OutgoingRequest, or Accepted if they had already asked
+        /// us (mutual request), or unchanged if we're already contacts / already asked.
         /// </summary>
-        public Task AddAcceptedAsync(Contact contact)
+        public Task<ContactState> MarkRequestSentAsync(Contact target)
             => db.RunAsync(async d =>
             {
-                var existing = await d.Contacts.FindAsync(contact.Id);
-                if (existing == null)
+                var c = await d.Contacts.FindAsync(target.Id);
+                if (c == null)
                 {
-                    contact.State = ContactState.Accepted;
-                    d.Contacts.Add(contact);
+                    target.State = ContactState.OutgoingRequest;
+                    d.Contacts.Add(target);
+                    await d.SaveChangesAsync();
+                    return target.State;
                 }
-                else
+
+                if (!string.IsNullOrEmpty(target.IpAddress))
                 {
-                    existing.DisplayName = contact.DisplayName;
-                    existing.IpAddress = contact.IpAddress;
-                    existing.Port = contact.Port;
-                    existing.LastSeen = contact.LastSeen;
-                    existing.State = ContactState.Accepted;
+                    c.IpAddress = target.IpAddress;
+                    c.Port = target.Port;
                 }
+                if (c.DisplayName == Contact.PlaceholderName(c.Id) && !string.IsNullOrWhiteSpace(target.DisplayName))
+                    c.DisplayName = target.DisplayName;
+
+                c.State = c.State switch
+                {
+                    ContactState.Stranger        => ContactState.OutgoingRequest,
+                    ContactState.IncomingRequest => ContactState.Accepted,
+                    _                            => c.State
+                };
                 await d.SaveChangesAsync();
+                return c.State;
             });
 
-        /// <summary>Promotes a known peer to an accepted contact. Returns false if unknown or already accepted.</summary>
-        public Task<bool> AcceptAsync(string contactId)
+        /// <summary>
+        /// <paramref name="contactId"/> sent us a request. Returns (old, new) state:
+        /// Stranger → IncomingRequest; OutgoingRequest → Accepted (mutual); otherwise unchanged.
+        /// The requester's name replaces a placeholder name.
+        /// </summary>
+        public Task<(ContactState Old, ContactState New)> MarkRequestReceivedAsync(string contactId, string displayName)
             => db.RunAsync(async d =>
             {
                 var c = await d.Contacts.FindAsync(contactId);
-                if (c == null || c.State == ContactState.Accepted) return false;
-                c.State = ContactState.Accepted;
+                if (c == null)
+                {
+                    // Normally the handshake already created a Stranger row when pinning the key.
+                    c = new Contact { Id = contactId, DisplayName = Contact.PlaceholderName(contactId), LastSeen = DateTime.UtcNow };
+                    d.Contacts.Add(c);
+                }
+                if (c.DisplayName == Contact.PlaceholderName(c.Id) && !string.IsNullOrWhiteSpace(displayName))
+                    c.DisplayName = displayName.Trim();
+
+                var old = c.State;
+                c.State = old switch
+                {
+                    ContactState.Stranger        => ContactState.IncomingRequest,
+                    ContactState.OutgoingRequest => ContactState.Accepted,
+                    _                            => old
+                };
+                await d.SaveChangesAsync();
+                return (old, c.State);
+            });
+
+        /// <summary>
+        /// Atomic compare-and-set: moves the contact from <paramref name="from"/> to
+        /// <paramref name="to"/> only if it is currently in <paramref name="from"/>.
+        /// Returns whether the transition happened.
+        /// </summary>
+        public Task<bool> TransitionAsync(string contactId, ContactState from, ContactState to)
+            => db.RunAsync(async d =>
+            {
+                var c = await d.Contacts.FindAsync(contactId);
+                if (c == null || c.State != from) return false;
+                c.State = to;
                 await d.SaveChangesAsync();
                 return true;
             });

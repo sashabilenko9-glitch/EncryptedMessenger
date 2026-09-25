@@ -2,118 +2,195 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:EncryptedMessenger.WPF.ViewModels"
-        Title="In der Nähe – EncryptedMessenger"
-        Height="480" Width="420"
-        MinHeight="320" MinWidth="360"
+        Title="Kontakte finden – EncryptedMessenger"
+        Height="560" Width="460"
+        MinHeight="360" MinWidth="380"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BgMainBrush}">
+
+    <Window.Resources>
+        <!-- Section heading, same look as the settings window -->
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0 14 0 8"/>
+        </Style>
+
+        <!-- Card + avatar shared by all three lists -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource BgHeaderBrush}"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="12 10"/>
+            <Setter Property="Margin" Value="0 0 0 8"/>
+        </Style>
+        <Style x:Key="Avatar" TargetType="Border">
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="CornerRadius" Value="20"/>
+            <Setter Property="Background" Value="#2B4E6E"/>
+        </Style>
+    </Window.Resources>
 
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <!-- title + explanation -->
+            <!-- title -->
             <RowDefinition Height="*"/>
-            <!-- list / empty state -->
+            <!-- sections -->
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Margin="0 0 0 14">
-            <TextBlock Text="📡  In der Nähe"
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="📡  Kontakte finden"
                        FontSize="18"
                        FontWeight="SemiBold"
                        Foreground="{StaticResource TextPrimaryBrush}"/>
-            <TextBlock Text="Andere Instanzen im selben Netzwerk, die noch nicht in Ihren Kontakten sind."
+            <TextBlock Text="Eine Unterhaltung beginnt, sobald beide Seiten zugestimmt haben."
                        Foreground="{StaticResource TextSecondaryBrush}"
                        FontSize="12"
                        TextWrapping="Wrap"
                        Margin="0 6 0 0"/>
         </StackPanel>
 
-        <!-- Empty state (discovery on, nobody found) -->
-        <TextBlock Grid.Row="1"
-                   Text="Niemand gefunden. Andere Instanzen im selben WLAN erscheinen hier automatisch."
-                   Foreground="{StaticResource TextMutedBrush}"
-                   FontSize="13"
-                   TextWrapping="Wrap"
-                   TextAlignment="Center"
-                   VerticalAlignment="Center">
-            <TextBlock.Style>
-                <Style TargetType="TextBlock">
-                    <Setter Property="Visibility" Value="Collapsed"/>
-                    <Style.Triggers>
-                        <MultiDataTrigger>
-                            <MultiDataTrigger.Conditions>
-                                <Condition Binding="{Binding IsEmpty}" Value="True"/>
-                                <Condition Binding="{Binding IsDiscoveryEnabled}" Value="True"/>
-                            </MultiDataTrigger.Conditions>
-                            <Setter Property="Visibility" Value="Visible"/>
-                        </MultiDataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </TextBlock.Style>
-        </TextBlock>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
 
-        <!-- Discovery switched off in settings -->
-        <TextBlock Grid.Row="1"
-                   Text="Die UDP-Geräteerkennung ist in den Einstellungen deaktiviert."
-                   Foreground="{StaticResource TextMutedBrush}"
-                   FontSize="13"
-                   TextWrapping="Wrap"
-                   TextAlignment="Center"
-                   VerticalAlignment="Center"
-                   Visibility="{Binding IsDiscoveryEnabled, Converter={StaticResource InvBoolToVis}}"/>
+                <!-- ═══ INCOMING REQUESTS ═══ -->
+                <StackPanel Visibility="{Binding HasIncoming, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="ANFRAGEN" Style="{StaticResource SectionTitle}"/>
+                    <ItemsControl ItemsSource="{Binding IncomingRequests}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:ContactRequestViewModel}">
+                                <Border Style="{StaticResource Card}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource Avatar}">
+                                            <TextBlock Text="{Binding FirstLetter}" Foreground="White" FontWeight="Bold" FontSize="16"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="12 0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextPrimaryBrush}"
+                                                       FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="möchte Sie als Kontakt hinzufügen" Foreground="{StaticResource TextMutedBrush}"
+                                                       FontSize="11" Margin="0 2 0 0"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource IconBtn}" Content="Ablehnen" Padding="10 7" Margin="0 0 6 0"
+                                                    Command="{Binding DataContext.DeclineCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Style="{StaticResource PrimaryBtn}" Content="Annehmen" Padding="14 7"
+                                                    Command="{Binding DataContext.AcceptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
 
-        <ItemsControl Grid.Row="1"
-                      ItemsSource="{Binding Peers}"
-                      Visibility="{Binding IsEmpty, Converter={StaticResource InvBoolToVis}}">
-            <ItemsControl.Template>
-                <ControlTemplate TargetType="ItemsControl">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsPresenter/>
-                    </ScrollViewer>
-                </ControlTemplate>
-            </ItemsControl.Template>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="{x:Type vm:NearbyPeerViewModel}">
-                    <Border Background="{StaticResource BgHeaderBrush}"
-                            CornerRadius="10"
-                            Padding="12 10"
-                            Margin="0 0 0 8">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
+                <!-- ═══ OUR PENDING REQUESTS ═══ -->
+                <StackPanel Visibility="{Binding HasOutgoing, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="GESENDET" Style="{StaticResource SectionTitle}"/>
+                    <ItemsControl ItemsSource="{Binding OutgoingRequests}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:ContactRequestViewModel}">
+                                <Border Style="{StaticResource Card}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource Avatar}">
+                                            <TextBlock Text="{Binding FirstLetter}" Foreground="White" FontWeight="Bold" FontSize="16"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="12 0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextPrimaryBrush}"
+                                                       FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="wartet auf Bestätigung…" Foreground="{StaticResource TextMutedBrush}"
+                                                       FontSize="11" FontStyle="Italic" Margin="0 2 0 0"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="2" Style="{StaticResource IconBtn}" Content="Zurückziehen" Padding="10 7"
+                                                VerticalAlignment="Center"
+                                                Command="{Binding DataContext.CancelCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
 
-                            <Border Grid.Column="0" Width="40" Height="40" CornerRadius="20" Background="#2B4E6E">
-                                <TextBlock Text="{Binding FirstLetter}"
-                                           Foreground="White" FontWeight="Bold" FontSize="16"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <!-- ═══ NEARBY ═══ -->
+                <TextBlock Text="IN DER NÄHE" Style="{StaticResource SectionTitle}"/>
+
+                <!-- Empty state (discovery on, nobody found) -->
+                <TextBlock Text="Niemand gefunden. Andere Instanzen im selben WLAN erscheinen hier automatisch."
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="13"
+                           TextWrapping="Wrap"
+                           Margin="0 4">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                        <Condition Binding="{Binding IsDiscoveryEnabled}" Value="True"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <!-- Discovery switched off in settings -->
+                <TextBlock Text="Die UDP-Geräteerkennung ist in den Einstellungen deaktiviert."
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="13"
+                           TextWrapping="Wrap"
+                           Margin="0 4"
+                           Visibility="{Binding IsDiscoveryEnabled, Converter={StaticResource InvBoolToVis}}"/>
+
+                <ItemsControl ItemsSource="{Binding Peers}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:NearbyPeerViewModel}">
+                            <Border Style="{StaticResource Card}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Style="{StaticResource Avatar}">
+                                        <TextBlock Text="{Binding FirstLetter}" Foreground="White" FontWeight="Bold" FontSize="16"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="12 0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextPrimaryBrush}"
+                                                   FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Address}" Foreground="{StaticResource TextMutedBrush}"
+                                                   FontSize="11" Margin="0 2 0 0"/>
+                                    </StackPanel>
+                                    <!-- The item's DataContext is the peer; the command lives on the window's view model. -->
+                                    <Button Grid.Column="2" Style="{StaticResource PrimaryBtn}" Content="Anfrage senden" Padding="14 7"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding DataContext.AddCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}"/>
+                                </Grid>
                             </Border>
-
-                            <StackPanel Grid.Column="1" Margin="12 0" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding DisplayName}"
-                                           Foreground="{StaticResource TextPrimaryBrush}"
-                                           FontWeight="SemiBold" FontSize="14"
-                                           TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Text="{Binding Address}"
-                                           Foreground="{StaticResource TextMutedBrush}"
-                                           FontSize="11" Margin="0 2 0 0"/>
-                            </StackPanel>
-
-                            <!-- The item's DataContext is the peer; the command lives on the window's view model. -->
-                            <Button Grid.Column="2"
-                                    Style="{StaticResource PrimaryBtn}"
-                                    Content="Hinzufügen"
-                                    Padding="14 7"
-                                    VerticalAlignment="Center"
-                                    Command="{Binding DataContext.AddCommand,
-                                              RelativeSource={RelativeSource AncestorType=Window}}"
-                                    CommandParameter="{Binding}"/>
-                        </Grid>
-                    </Border>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Window>

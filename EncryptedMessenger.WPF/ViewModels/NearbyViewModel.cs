@@ -6,9 +6,9 @@ using Microsoft.Extensions.Logging;
 namespace EncryptedMessenger.WPF.ViewModels
 {
     /// <summary>
-    /// "Nearby" window: messenger instances announcing themselves on the LAN that are not
-    /// contacts yet. The list is owned by the service (it hears the UDP announcements and
-    /// expires silent peers); this view model only mirrors the latest NearbyList it sent.
+    /// "Find contacts" window: incoming requests, our pending requests, and messenger instances
+    /// announcing themselves on the LAN that are not contacts yet. All three lists are owned by
+    /// the service; this view model only mirrors the latest RequestList / NearbyList it sent.
     /// </summary>
     public class NearbyViewModel : ObservableObject
     {
@@ -16,21 +16,42 @@ namespace EncryptedMessenger.WPF.ViewModels
         private readonly ILogger _logger;
 
         public ObservableCollection<NearbyPeerViewModel> Peers { get; } = [];
+        public ObservableCollection<ContactRequestViewModel> IncomingRequests { get; } = [];
+        public ObservableCollection<ContactRequestViewModel> OutgoingRequests { get; } = [];
 
         public bool IsEmpty => Peers.Count == 0;
+        public bool HasIncoming => IncomingRequests.Count > 0;
+        public bool HasOutgoing => OutgoingRequests.Count > 0;
 
-        /// <summary>Discovery can be switched off in the settings; then this list stays empty for a reason worth showing.</summary>
+        /// <summary>Shown as a badge on the sidebar button so a new request isn't missed.</summary>
+        public int IncomingCount => IncomingRequests.Count;
+
+        /// <summary>Discovery can be switched off in the settings; then the nearby list stays empty for a reason worth showing.</summary>
         public bool IsDiscoveryEnabled { get; }
 
         public AsyncRelayCommand AddCommand { get; }
+        public AsyncRelayCommand AcceptCommand { get; }
+        public AsyncRelayCommand DeclineCommand { get; }
+        public AsyncRelayCommand CancelCommand { get; }
 
         public NearbyViewModel(PipeClient pipe, bool isDiscoveryEnabled, ILoggerFactory loggerFactory)
         {
             _pipe = pipe;
             IsDiscoveryEnabled = isDiscoveryEnabled;
             _logger = loggerFactory.CreateLogger<NearbyViewModel>();
-            AddCommand = new AsyncRelayCommand(p => AddAsync(p as NearbyPeerViewModel), p => p is NearbyPeerViewModel);
+
+            AddCommand = new AsyncRelayCommand(
+                p => SendAsync(PipeMessageType.AddNearbyPeer, p is NearbyPeerViewModel n ? new AddNearbyPeerPayload(n.PeerId) : null),
+                p => p is NearbyPeerViewModel);
+            AcceptCommand  = RequestCommand(PipeMessageType.AcceptContactRequest);
+            DeclineCommand = RequestCommand(PipeMessageType.DeclineContactRequest);
+            CancelCommand  = RequestCommand(PipeMessageType.CancelContactRequest);
         }
+
+        // The three request buttons differ only in the message type they send.
+        private AsyncRelayCommand RequestCommand(PipeMessageType type)
+            => new(p => SendAsync(type, p is ContactRequestViewModel r ? new ContactIdPayload(r.ContactId) : null),
+                   p => p is ContactRequestViewModel);
 
         /// <summary>Called by MainViewModel (on the UI thread) when the service sends a new NearbyList.</summary>
         public void Replace(List<NearbyPeerPayload> peers)
@@ -40,25 +61,26 @@ namespace EncryptedMessenger.WPF.ViewModels
             OnPropertyChanged(nameof(IsEmpty));
         }
 
-        /// <summary>Asks the service for the current list (e.g. when the window opens).</summary>
-        public async Task RefreshAsync()
+        /// <summary>Called by MainViewModel (on the UI thread) when the service sends a new RequestList.</summary>
+        public void ReplaceRequests(List<ContactRequestPayload> requests)
         {
-            try { await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.GetNearby, new { })); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Nearby list request failed"); }
+            IncomingRequests.Clear();
+            OutgoingRequests.Clear();
+            foreach (var r in requests)
+                (r.Incoming ? IncomingRequests : OutgoingRequests).Add(new ContactRequestViewModel(r));
+            OnPropertyChanged(nameof(HasIncoming));
+            OnPropertyChanged(nameof(HasOutgoing));
+            OnPropertyChanged(nameof(IncomingCount));
         }
 
-        private async Task AddAsync(NearbyPeerViewModel? peer)
+        /// <summary>Asks the service for the current lists (e.g. when the window opens).</summary>
+        public Task RefreshAsync() => SendAsync(PipeMessageType.GetNearby, new { });
+
+        private async Task SendAsync<T>(PipeMessageType type, T? payload)
         {
-            if (peer == null) return;
-            try
-            {
-                await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.AddNearbyPeer,
-                    new AddNearbyPeerPayload(peer.PeerId)));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Adding nearby peer {PeerId} failed", peer.PeerId);
-            }
+            if (payload == null) return;
+            try { await _pipe.SendAsync(PipeMessage.Create(type, payload)); }
+            catch (Exception ex) { _logger.LogWarning(ex, "{Type} request failed", type); }
         }
     }
 
@@ -69,5 +91,14 @@ namespace EncryptedMessenger.WPF.ViewModels
         public string Address { get; } = $"{peer.IpAddress}:{peer.Port}";
         public string FirstLetter { get; } =
             string.IsNullOrEmpty(peer.DisplayName) ? "?" : peer.DisplayName[0].ToString().ToUpper();
+    }
+
+    public class ContactRequestViewModel(ContactRequestPayload request)
+    {
+        public string ContactId { get; } = request.ContactId;
+        public string DisplayName { get; } = request.DisplayName;
+        public string IpAddress { get; } = request.IpAddress;
+        public string FirstLetter { get; } =
+            string.IsNullOrEmpty(request.DisplayName) ? "?" : request.DisplayName[0].ToString().ToUpper();
     }
 }

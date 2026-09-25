@@ -13,6 +13,7 @@ namespace EncryptedMessenger.Core.Network
     {
         public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
         public event EventHandler<DeliveryAckEventArgs>? DeliveryAcknowledged;
+        public event EventHandler<ContactControlEventArgs>? ContactControlReceived;
         public event EventHandler? Disconnected;
 
         private readonly string _ownId;
@@ -131,30 +132,32 @@ namespace EncryptedMessenger.Core.Network
         }
 
         /// <summary>
-        /// Sends a ReadAck over this outbound connection (the peer's MessengerServer
-        /// handles it like one arriving on the connection it opened). Returns false if
-        /// not connected or the write failed.
+        /// Sends an unencrypted control packet (ReadAck, ContactRequest/Accept/Decline, NotAContact)
+        /// over this outbound connection; the peer's MessengerServer handles it like one arriving
+        /// on the connection it opened. The connection itself is key-pinned, which is what makes
+        /// these packets trustworthy. Returns false if not connected or the write failed.
         /// Callers must not write concurrently with <see cref="SendMessageAsync"/>;
         /// MessengerService does both only while holding its clients lock.
         /// </summary>
-        public async Task<bool> SendReadAckAsync(string messageId)
+        public async Task<bool> SendControlAsync(PacketType type, string? messageId = null, string payload = "")
         {
             if (_stream == null || !IsConnected) return false;
             try
             {
                 await PacketHelper.SendAsync(_stream, new NetworkPacket
                 {
-                    Type = PacketType.ReadAck,
+                    Type = type,
                     SenderId = _ownId,
                     RecipientId = ContactId,
                     MessageId = messageId,
+                    Payload = payload,
                     Timestamp = DateTime.UtcNow
                 });
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Read-ack send failed for {ContactId}", ContactId);
+                _logger.LogWarning(ex, "{PacketType} send failed for {ContactId}", type, ContactId);
                 return false;
             }
         }
@@ -203,6 +206,14 @@ namespace EncryptedMessenger.Core.Network
                             if (pkt.MessageId != null)
                                 DeliveryAcknowledged?.Invoke(this, new DeliveryAckEventArgs(
                                     pkt.MessageId, isRead: pkt.Type == PacketType.ReadAck));
+                            break;
+
+                        case PacketType.ContactRequest:
+                        case PacketType.ContactAccept:
+                        case PacketType.ContactDecline:
+                        case PacketType.NotAContact:
+                            ContactControlReceived?.Invoke(this, new ContactControlEventArgs(
+                                ContactId, pkt.Type, pkt.Payload, pkt.MessageId));
                             break;
 
                         case PacketType.Disconnect:

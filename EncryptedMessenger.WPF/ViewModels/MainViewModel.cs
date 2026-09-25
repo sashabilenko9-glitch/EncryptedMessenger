@@ -152,6 +152,10 @@ namespace EncryptedMessenger.WPF.ViewModels
                         Nearby.Replace(msg.Deserialize<List<NearbyPeerPayload>>());
                         break;
 
+                    case PipeMessageType.RequestList:
+                        Nearby.ReplaceRequests(msg.Deserialize<List<ContactRequestPayload>>());
+                        break;
+
                     case PipeMessageType.MessageRead:
                         ActiveChat?.MarkReadByPeer(msg.Deserialize<string>());
                         break;
@@ -262,6 +266,9 @@ namespace EncryptedMessenger.WPF.ViewModels
                 var vm = dlg.ViewModel;
                 await _pipe.SendAsync(PipeMessage.Create(PipeMessageType.AddContact,
                     new AddContactPayload(vm.DisplayName.Trim(), vm.IpAddress.Trim(), vm.ParsedPort)));
+                // Adding by IP sends a contact request; it appears under "Gesendet" until accepted,
+                // so show that window instead of leaving the user wondering where the contact went.
+                OpenNearby();
             }
         }
 

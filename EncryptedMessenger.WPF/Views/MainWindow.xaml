@@ -103,11 +103,29 @@
                     <StackPanel Grid.Column="2"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center">
-                        <Button Style="{StaticResource IconBtn}"
-                                FontSize="15"
-                                Content="📡"
-                                Command="{Binding OpenNearbyCommand}"
-                                ToolTip="In der Nähe – Instanzen im Netzwerk finden"/>
+                        <!-- Grid lets the unread-requests badge sit on top of the button's corner -->
+                        <Grid>
+                            <Button Style="{StaticResource IconBtn}"
+                                    FontSize="15"
+                                    Content="📡"
+                                    Command="{Binding OpenNearbyCommand}"
+                                    ToolTip="Kontakte finden – Anfragen und Instanzen in der Nähe"/>
+                            <Border Background="{StaticResource DangerBrush}"
+                                    CornerRadius="8"
+                                    MinWidth="16" Height="16"
+                                    Padding="4 0"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Top"
+                                    IsHitTestVisible="False"
+                                    Visibility="{Binding Nearby.HasIncoming, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding Nearby.IncomingCount}"
+                                           Foreground="White"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
                         <Button Style="{StaticResource IconBtn}"
                                 FontSize="18"
                                 Content="+"

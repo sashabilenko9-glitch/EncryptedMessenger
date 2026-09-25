@@ -40,7 +40,24 @@ namespace EncryptedMessenger.Core.Models
         Disconnect   = 5,
 
         /// <summary>Payload = display name – sent on connection to identify the peer.</summary>
-        Identity     = 6
+        Identity     = 6,
+
+        // ── Contact requests (sent over a handshaked, key-pinned connection) ──
+
+        /// <summary>Payload = requester's display name. "Please add me as a contact."</summary>
+        ContactRequest = 7,
+
+        /// <summary>Payload empty. Answer to ContactRequest: we are contacts now.</summary>
+        ContactAccept  = 8,
+
+        /// <summary>Payload empty. Answer to ContactRequest: no.</summary>
+        ContactDecline = 9,
+
+        /// <summary>
+        /// MessageId = the rejected message. Reply to a Message from a peer we haven't accepted:
+        /// the message was dropped (not stored, no DeliveryAck).
+        /// </summary>
+        NotAContact    = 10
     }
 
     // ── UDP peer-discovery packets (separate from TCP) ────────────────────

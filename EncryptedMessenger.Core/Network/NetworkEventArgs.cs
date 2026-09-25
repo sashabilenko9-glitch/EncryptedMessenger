@@ -28,6 +28,16 @@ namespace EncryptedMessenger.Core.Network
         public int    Port        { get; } = port;
     }
 
+    /// <summary>A contact-request control packet (ContactRequest/Accept/Decline/NotAContact) from <see cref="ContactId"/>.</summary>
+    public class ContactControlEventArgs(string contactId, Models.PacketType type, string payload, string? messageId) : EventArgs
+    {
+        /// <summary>Identity from the handshake (key-pinned), never the packet's self-declared SenderId.</summary>
+        public string ContactId { get; } = contactId;
+        public Models.PacketType Type { get; } = type;
+        public string Payload { get; } = payload;
+        public string? MessageId { get; } = messageId;
+    }
+
     public class DeliveryAckEventArgs(string messageId, bool isRead = false) : EventArgs
     {
         public string MessageId { get; } = messageId;

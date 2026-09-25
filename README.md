@@ -10,7 +10,7 @@ A serverless, end-to-end encrypted peer-to-peer messenger for the local network 
 
 - **Serverless P2P messaging** over TCP between instances on the same LAN.
 - **End-to-end encryption** using a hybrid scheme: RSA-2048 for the key exchange, AES-256 for message contents.
-- **Automatic peer discovery** via UDP broadcast, plus manual contacts by IP address and port.
+- **Contact requests with consent:** peers found via UDP broadcast appear under "Kontakte finden" (📡), not directly in your contacts. You send a request, the other side accepts or declines, and only accepted contacts can message you. Messages from anyone else are refused without being stored. Contacts can also be requested by IP address and port. Requests made while the peer is offline are delivered when it comes online.
 - **Persistent history** — contacts and messages stored locally with Entity Framework Core + SQLite.
 - **Background Windows Service** that keeps receiving messages even when the UI is closed (optional; the app also runs standalone).
 - **WPF desktop UI** built with the MVVM pattern (contacts list, chat view with emojis, settings).

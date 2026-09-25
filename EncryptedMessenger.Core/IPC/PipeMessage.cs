@@ -18,7 +18,10 @@ namespace EncryptedMessenger.Core.IPC
         ContactIdChanged = 7,
         AcceptPeerKey    = 8,
         GetNearby        = 9,
-        AddNearbyPeer    = 10,
+        AddNearbyPeer    = 10, // send a contact request to a nearby peer
+        AcceptContactRequest  = 11,
+        DeclineContactRequest = 12,
+        CancelContactRequest  = 13, // withdraw our own pending request (local only)
 
         // Service → UI
         NewIncomingMessage = 100,
@@ -31,6 +34,7 @@ namespace EncryptedMessenger.Core.IPC
         SendFailed         = 107, // Payload = messageId (string)
         MessageRead        = 108, // Payload = messageId (string)
         NearbyList         = 109, // Payload = List<NearbyPeerPayload>
+        RequestList        = 110, // Payload = List<ContactRequestPayload>
 
         // Bidirectional
         Heartbeat        = 200,
@@ -68,6 +72,12 @@ namespace EncryptedMessenger.Core.IPC
     public record NearbyPeerPayload(string PeerId, string DisplayName, string IpAddress, int Port);
 
     public record AddNearbyPeerPayload(string PeerId);
+
+    /// <summary>A pending contact request. <paramref name="Incoming"/>: they asked us (true) or we asked them (false).</summary>
+    public record ContactRequestPayload(string ContactId, string DisplayName, string IpAddress, bool Incoming);
+
+    /// <summary>Accept / decline / cancel a request for this contact.</summary>
+    public record ContactIdPayload(string ContactId);
 
     /// <summary>
     /// History reply. Carries the conversation it belongs to, because it is broadcast to
